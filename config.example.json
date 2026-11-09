@@ -1,0 +1,21 @@
+{
+  "name": "鲸鱼娘",
+  "port": 47823,
+  "skin": "skins/whale",
+  "extension_dirs": [],
+  "work_start": "09:00",
+  "work_end": "20:00",
+  "wander": true,
+  "wander_gap": [40, 120],
+  "action_gap": [8, 20],
+  "oops_words": ["失败", "出错", "错误", "过期"],
+  "play": {
+    "enabled": true,
+    "idle_minutes": 30,
+    "chance": 0.35,
+    "cooldown_minutes": 60,
+    "invite_seconds": 25,
+    "chase_seconds": 45
+  },
+  "water": {"enabled": false, "every_minutes": 60}
+}

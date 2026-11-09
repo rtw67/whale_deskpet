@@ -1,0 +1,6 @@
+# 运行时数据：位置、好感存档、日志
+data/
+# 本地配置（照着 config.example.json 写）
+config.json
+__pycache__/
+*.pyc
