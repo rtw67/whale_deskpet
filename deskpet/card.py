@@ -30,10 +30,11 @@ def show_card(pet):
     card.pack(padx=2, pady=2)
 
     days = (date.today() - date.fromisoformat(s.first_seen)).days + 1
-    tk.Label(card, text="%s  Lv.%d %s" % (pet.cfg.get("name", "鲸鱼娘"), lv, title), bg=BG, fg=TITLE_FG,
+    tk.Label(card, text="状态", bg=BG, fg=TITLE_FG,
              font=(FONT, 11, "bold")).pack(anchor="w", padx=14, pady=(12, 0))
-    tk.Label(card, text="认识第 %d 天" % days, bg=BG, fg=DETAIL_FG,
-             font=(FONT, 8)).pack(anchor="w", padx=14, pady=(0, 8))
+    tk.Label(card, text="%s · Lv.%d %s · 认识第 %d 天"
+             % (pet.cfg.get("name", "鲸鱼娘"), lv, title, days),
+             bg=BG, fg=DETAIL_FG, font=(FONT, 8)).pack(anchor="w", padx=14, pady=(0, 8))
 
     if nxt:
         frac = (s.affection - start) / float(nxt - start)

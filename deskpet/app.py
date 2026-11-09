@@ -363,9 +363,7 @@ class Pet:
         log("右键：打开菜单")
         items = [
             {"label": "消息", "tip": "最近的提醒", "cb": self.recent_entries, "sub": True},
-            {"label": "玩", "tip": "一起玩", "cb": self.play_entries, "sub": True},
-            {"label": "喂饭", "tip": "喂一碗白饭", "cb": self.feed},
-            {"label": "状态", "tip": "好感度 / 心情 / 体力", "cb": self.show_status},
+            {"label": "互动", "tip": "玩 · 喂饭 · 状态", "cb": self.interact_entries, "sub": True},
         ]
         for more in self.ext.call("menu_items", self):
             items += list(more or [])
@@ -377,6 +375,14 @@ class Pet:
         x, y = self.root.winfo_rootx(), self.root.winfo_rooty()
         side = "right" if x > self.sw // 2 else "left"
         self.menu.open(x + self.cw // 2, y + self.ch // 2, items, side)
+
+    def interact_entries(self):
+        """「互动」子菜单：一起玩、喂饭、看状态。"""
+        return [
+            {"label": "玩", "tip": "一起玩", "cb": self.play_entries, "sub": True},
+            {"label": "喂饭", "tip": "喂一碗白饭", "cb": self.feed},
+            {"label": "状态", "tip": "好感度 / 心情 / 体力", "cb": self.show_status},
+        ]
 
     def play_entries(self):
         """「玩」子菜单：能玩的游戏，点了直接开始（你主动叫的，不用再发邀请）。"""
