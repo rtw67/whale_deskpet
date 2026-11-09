@@ -6,6 +6,8 @@
   "work_start": "09:00",
   "work_end": "20:00",
   "wander": true,
+  "home_range": 260,
+  "home_rise": 110,
   "wander_gap": [40, 120],
   "action_gap": [8, 20],
   "oops_words": ["失败", "出错", "错误", "过期"],

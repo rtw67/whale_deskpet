@@ -21,8 +21,8 @@ import math
 import random
 import time
 
-HOME_RANGE = 450           # 离家最远多少像素（横向）
-HOME_RISE = 160            # 最多比家高多少像素（往上溜达，不会往下钻进任务栏）
+HOME_RANGE = 260           # 离家最远多少像素（横向）
+HOME_RISE = 110            # 最多比家高多少像素（往上溜达，不会往下钻进任务栏）
 TRIP_LEGS = (1, 4)         # 一趟溜达分几段：走一段、停一下、再走
 CROSS_CHANCE = 0.08        # 偶尔来一趟「路过」：横穿大半个屏幕再回家
 MOVE_MS = 40               # 移动时窗口挪位置的间隔（比动画 tick 密，走起来不卡）
@@ -151,7 +151,7 @@ class Behavior:
         lo_x, hi_x, lo_y, hi_y = self._area()
         if hi_x - lo_x < 120:
             return False
-        if random.random() < CROSS_CHANCE:
+        if random.random() < self._cross_chance():
             # 路过：先走到区域另一头，再回到家附近
             far = lo_x if x - lo_x > hi_x - x else hi_x
             stops = [(far, y), (random.uniform(lo_x, hi_x), self.pet.home_y)]
@@ -169,6 +169,15 @@ class Behavior:
         p.root.after(MOVE_MS, self._tick_move)
         return True
 
+    def _cross_chance(self):
+        """「路过」的概率：活动范围本来就不大的话（家贴着屏幕边、或者调小了范围），基本不横穿。"""
+        p = self.pet
+        c = p.cfg.get("cross_chance")
+        if c is not None:
+            return float(c)
+        lo_x, hi_x, _, _ = self._area()
+        return CROSS_CHANCE if hi_x - lo_x >= 500 else 0.0
+
     def _styles(self):
         return [st for st, (_, need, fallback) in MOVES.items()
                 if self.has(need) or (fallback and self.has(fallback))]
@@ -177,13 +186,16 @@ class Behavior:
         """能溜达的范围：家附近，但家贴着屏幕边时整体往里挪，两边都有地方走。"""
         p = self.pet
         min_x, max_x = 10, p.sw - p.cw - 10
-        lo, hi = p.home_x - HOME_RANGE, p.home_x + HOME_RANGE
+        rng = float(p.cfg.get("home_range", HOME_RANGE))
+        lo, hi = p.home_x - rng, p.home_x + rng
         if lo < min_x:
             hi, lo = min(max_x, hi + (min_x - lo)), min_x
         if hi > max_x:
             lo, hi = max(min_x, lo - (hi - max_x)), max_x
         base = min(p.home_y, p.sh - p.ch - 40)
-        return lo, hi, max(10, base - HOME_RISE), base
+        # 左右范围和高度都能在 config.json 里调：home_range / home_rise
+        rise = float(p.cfg.get("home_rise", HOME_RISE))
+        return lo, hi, max(10, base - rise), base
 
     def _next_leg(self):
         """开始下一段：换个走法，路线带一点弧度。"""
