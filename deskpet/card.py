@@ -127,3 +127,58 @@ def show_detail(pet, msg):
     cy = max(min(y + pet.ch - ch, pet.sh - ch - 50), 4)
     win.geometry("+%d+%d" % (cx, cy))
     return win
+
+
+# ---------------------------------------------------------------------- 云朵气泡
+CLOUD = "#2f7fd6"          # 和右键泡泡同一个蓝
+CLOUD_EDGE = "#d4ebff"
+CLOUD_TEXT = "#ffffff"
+CLOUD_HINT = "#dcecff"
+
+
+def bubble_size(text, buttons=False, closable=False, font_px=17):
+    """按文字长短估一个云朵大小（多行文字按最宽的一行算）。
+
+    font_px 是实际字高（雅黑 9 号约 17 像素）：中文按一个字一个 font_px、
+    英文数字按 0.55 估，再加左右留白。
+    """
+    lines = text.split("\n") if text else [""]
+    wide = max(sum(font_px if ord(c) > 0x2E80 else font_px * 0.55 for c in ln) for ln in lines)
+    w = max(wide + 52, 130)
+    h = 34 + (font_px + 6) * len(lines)
+    if buttons:
+        w += 110
+    elif closable:
+        w += 16
+    return int(min(w, 400)), int(h)
+
+
+def cloud(canvas, x0, y0, x1, y1, tail=None, fill=CLOUD, outline=CLOUD_EDGE, width=2):
+    """在画布上画一朵云：用一圈鼓包当遮罩，拼出一整朵（描边在下面一层，先画大的深色再画小的）。
+
+    tail: 尾巴尖的位置 (x, y)；None 就不画尾巴。
+    """
+    w, h = x1 - x0, y1 - y0
+    r = max(min(h / 2.0, 26), 14)                 # 鼓包别太大，不然云朵变成几个大圆
+    bumps = []
+    n = max(4, int(w / (r * 1.15)))
+    for i in range(n + 1):                       # 上下两排鼓包交错，边缘看起来是瓣状的
+        cx = x0 + r + (w - 2 * r) * (i / float(n))
+        bumps.append((cx, y0 + r * 0.62, r * 0.78))
+        if i < n:
+            bumps.append((x0 + r + (w - 2 * r) * ((i + 0.5) / n), y0 + h - r * 0.62, r * 0.82))
+    # 两头各一个圆，把左右封住
+    bumps += [(x0 + r * 0.75, y0 + h / 2, h / 2 - 2), (x1 - r * 0.75, y0 + h / 2, h / 2 - 2)]
+    if tail:
+        bumps.append((tail[0], tail[1], 7))
+
+    def draw(grow, color):
+        items = []
+        for cx, cy, rr in bumps:
+            items.append(canvas.create_oval(cx - rr - grow, cy - rr - grow,
+                                            cx + rr + grow, cy + rr + grow,
+                                            fill=color, outline=""))
+        return items
+
+    draw(width, outline)                         # 先画大一圈的描边色
+    return draw(0, fill)                         # 再画本体

@@ -16,6 +16,7 @@
 - **一起玩**：闲得久了会邀请你玩「追鼠标」；也可以右键「玩」主动开始。玩法是插件，可以自己加。
 - **好感度 / 心情 / 体力**：摸摸、喂饭、陪玩都会涨好感，好感越高解锁越多台词。只加分、不惩罚、不需要每天照顾。
 - **右键泡泡菜单**：多层、自动分页、像素风图标。
+- **云朵气泡**：蓝色云朵形状、白字，大小随文字自动收放，小尾巴指向她。
 - **休息时间**：下班和周末她会睡觉（时间可配）。
 
 ## 快速开始
@@ -119,6 +120,7 @@ Pure Python standard library (tkinter) — **no pip install needed**.
 - **Affection / mood / energy** — petting, feeding and playing raise affection and unlock more lines.
   Positive only: no penalties, no daily chores.
 - **Bubble menu** — multi-level, auto-paginated, pixel-art icons.
+- **Cloud speech bubbles** — blue cloud shape with white text, sized to the text, with a little tail pointing at her.
 - **Rest hours** — she sleeps outside working hours and on weekends (configurable).
 
 ## Quick start

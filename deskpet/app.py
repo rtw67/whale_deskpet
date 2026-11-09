@@ -20,13 +20,13 @@ import tkinter as tk
 from deskpet import config, lines
 from deskpet import sprite
 from deskpet.behavior import Behavior
-from deskpet.card import show_card, show_detail
+from deskpet.card import CLOUD, CLOUD_HINT, CLOUD_TEXT, cloud, show_card, show_detail
 from deskpet.extensions import Extensions, load_all
 from deskpet.link import Server
 from deskpet.menu import BubbleMenu, load_icons
 from deskpet.play import PlayManager, user_idle_seconds
 from deskpet.stats import Stats
-from deskpet.theme import BG, BORDER, BTN2_BG, DETAIL_FG, FONT, MSG_FG, TITLE_FG
+from deskpet.theme import FONT
 from deskpet.util import ROOT, data_path, load_json, log, save_json
 
 try:
@@ -489,43 +489,66 @@ class Pet:
 
     # ------------------------------------------------------------------ 气泡
     def show_bubble(self, it):
+        """说话气泡：蓝色云朵 + 白字，大小正好包住文字，尾巴指向她。"""
+        from tkinter import font as tkfont
         if self.bubble is not None:
             self.bubble.destroy()
             self.bubble = None
         if it is None:
             return
+        text = it["text"]
+        urgent = it["kind"] == "sign"
+        buttons = it.get("buttons") or []
+        closable = not urgent and not buttons
+
+        f = tkfont.Font(font=(FONT, 9, "bold") if urgent else (FONT, 9))
+        lines = text.split("\n") or [""]
+        tw = max(f.measure(ln) for ln in lines)                 # 文字实际宽度
+        th = f.metrics("linespace") * len(lines)
+        bw = int(min(max(tw + 44 + (110 if buttons else 16 if closable else 0), 120), 430))
+        bh = int(th + 26)
+        TAIL = 12
+
         b = tk.Toplevel(self.root)
         b.overrideredirect(True)
         b.attributes("-topmost", True)
-        b.configure(bg=BORDER)
-        card = tk.Frame(b, bg=BG)
-        card.pack(padx=2, pady=2)
-        urgent = it["kind"] == "sign"
-        lbl = tk.Label(card, text=it["text"], bg=BG,
-                       fg=TITLE_FG if urgent else MSG_FG,
+        b.configure(bg=KEY)
+        b.wm_attributes("-transparentcolor", KEY)
+        c = tk.Canvas(b, width=bw, height=bh + TAIL, bg=KEY, highlightthickness=0)
+        c.pack()
+
+        # 尾巴朝着她：气泡在左就在右下角、在右就在左下角
+        left_side = self.bubble_side()
+        tx = bw - 30 if left_side else 30
+        cloud(c, 4, 4, bw - 4, bh - 4, tail=(tx, bh + TAIL - 2))
+
+        lbl = tk.Label(c, text=text, bg=CLOUD, fg=CLOUD_TEXT,
                        font=(FONT, 9, "bold") if urgent else (FONT, 9),
-                       justify="left", anchor="w", wraplength=220, cursor="hand2")
-        lbl.pack(side="left", padx=(10, 4), pady=8)
-        targets = [card, lbl]
-        if it.get("buttons"):
-            # 邀请：两个按钮，点了就把这条气泡拿掉再执行
-            row = tk.Frame(card, bg=BG)
-            row.pack(side="left", padx=(0, 8))
-            for label, cb in it["buttons"]:
-                tk.Button(row, text=label, bg=BTN2_BG, fg=MSG_FG, activebackground=BTN2_BG,
-                          activeforeground=MSG_FG, relief="flat", bd=0, padx=8, pady=1,
-                          font=(FONT, 9), cursor="hand2",
-                          command=lambda it=it, cb=cb: self.answer(it, cb)).pack(side="left", padx=2)
-            targets = []
-        elif not urgent:
-            # 举牌的气泡不给关：得去处理
-            x = tk.Label(card, text="×", bg=BG, fg=DETAIL_FG, font=(FONT, 10), cursor="hand2")
-            x.pack(side="right", anchor="n", padx=(0, 6), pady=4)
+                       justify="left", anchor="w", cursor="hand2")
+        c.create_window(20, bh / 2, window=lbl, anchor="w")
+
+        widgets = [lbl]
+        if buttons:
+            for k, (label, cb) in enumerate(buttons):
+                bt = tk.Button(c, text=label, bg="#ffffff", fg=CLOUD, relief="flat", bd=0,
+                               activebackground="#e6f1ff", activeforeground=CLOUD,
+                               padx=8, pady=1, font=(FONT, 9), cursor="hand2",
+                               command=lambda it=it, cb=cb: self.answer(it, cb))
+                c.create_window(bw - 18, bh / 2 + (k - (len(buttons) - 1) / 2.0) * 26,
+                                window=bt, anchor="e")
+                widgets.append(bt)
+        elif closable:
+            x = tk.Label(c, text="×", bg=CLOUD, fg=CLOUD_HINT, font=(FONT, 11), cursor="hand2")
+            c.create_window(bw - 14, 16, window=x, anchor="e")
             x.bind("<Button-1>", lambda e, it=it: self.dismiss(it))
-        for w in targets:
+        for w in widgets:
             w.bind("<Button-1>", lambda e, it=it: self.click_bubble(it))
         self.bubble = b
-        self.place_bubble()
+        self.place_bubble(bh + TAIL)
+
+    def bubble_side(self):
+        """气泡放在她左边还是右边（屏幕放得下的话左）。"""
+        return self.root.winfo_x() > 200
 
     def answer(self, it, cb):
         if it in self.items:
@@ -546,14 +569,15 @@ class Pet:
         if it in self.items:
             self.items.remove(it)
 
-    def place_bubble(self):
+    def place_bubble(self, height=None):
         if self.bubble is None:
             return
         self.bubble.update_idletasks()
-        bw, bh = self.bubble.winfo_reqwidth(), self.bubble.winfo_reqheight()
+        bw = self.bubble.winfo_reqwidth()
+        bh = height or self.bubble.winfo_reqheight()
         x, y = self.root.winfo_x(), self.root.winfo_y()
-        bx = x - bw - 4 if x - bw - 4 > 0 else x + self.cw + 4
-        by = max(y + self.ch - bh - 30, 0)
+        bx = x - bw + 10 if x - bw + 10 > 0 else x + self.cw - 10
+        by = max(min(y + self.ch - bh + 10, self.sh - bh - 10), 0)
         self.bubble.geometry("+%d+%d" % (bx, by))
 
 
