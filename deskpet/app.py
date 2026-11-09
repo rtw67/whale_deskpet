@@ -36,6 +36,7 @@ except ImportError:                       # 非 Windows
 
 KEY = "#ff00ff"            # 抠透明用的颜色：窗口里这个颜色的地方是透明的
 SIGN_ROOM = 34             # 头顶补画牌子要留的高度
+TAIL, GAP = 10, 6          # 气泡尾巴长度、气泡和她之间的空隙
 POS_PATH = data_path("pet_state.json")
 
 PERSIST, TRANSIENT = "persist", "transient"
@@ -70,9 +71,14 @@ class Pet:
         # 画布大小跟着角色走；皮肤里没画举牌动作的话，头顶留出补画牌子的地方
         sw_, sh_ = sprite.size(self.skin)
         need_sign = not (self.skin and "alarm" in self.skin and "qr" in self.skin)
+        self.sign_room = SIGN_ROOM if need_sign else 0
         self.cw = max(sw_, 64) + 16
-        self.ch = sh_ + 6 + (SIGN_ROOM if need_sign else 0)
-        self.head_y = self.ch - 4 - sh_          # 角色头顶的 y
+        self.base_h = sh_ + 6                   # 只有角色本身的高度：气泡按这个来算头的位置
+        self.ch = self.base_h + self.sign_room
+        self.head_y = self.ch - 4 - sh_          # 角色头顶的 y（不带补牌空位时的「头下方」）
+        # 她的头顶在窗口里的 y：窗口不留空位时，头顶就在顶上留白 4px 的位置。
+        # 别用 head_y 反推 —— 那样算出来是「脚以上、牌子以下」，气泡会贴着脚
+        self.head_top = 4
         self.canvas = tk.Canvas(root, width=self.cw, height=self.ch, bg=KEY,
                                 highlightthickness=0)
         self.canvas.pack()
@@ -96,6 +102,8 @@ class Pet:
         self.bubble_key = None
         self.t = 0
         self.drag = None
+        self.bubble_gap = TAIL
+        self.bubble_item = self.bubble_canvas = self.bubble_dim = None
         self.menu = BubbleMenu(root, KEY, owner=root, log=log,
                                icons=load_icons(sprite.SKIN_DIR))
         self.behavior = Behavior(self)
@@ -117,12 +125,26 @@ class Pet:
         root.bind("<ButtonRelease-1>", self.on_release)
         root.bind("<Button-3>", self.on_menu)
 
+        self.topmost(False)                      # 平时只用实际大小，不留头顶那段空位
         self.root.after(120, self.tick)
         self.root.after(200, self.poll_messages)
         self.root.after(500, self.poll)
         log("桌宠启动")
 
     # ------------------------------------------------------------------ 位置
+    def topmost(self, grow):
+        """grow=True：头顶留出空位（皮肤里没有举牌动作、要补画牌子时）。
+        平时不留：窗口透明的地方虽然能看到她，但那段空位会让「她的头在哪」算错，气泡会离头很远。"""
+        h = self.base_h + (self.sign_room if grow else 0)
+        if h == self.ch:
+            return
+        bottom = self.root.winfo_y() + self.ch
+        self.ch = h
+        self.head_y = self.ch - 4 - (self.ch - self.sign_room - 6)
+        self.canvas.configure(height=h)
+        self.root.geometry("%dx%d+%d+%d" % (self.cw, h, self.root.winfo_x(),
+                                            max(bottom - h, 0)))
+
     def default_pos(self):
         return self.sw - self.cw - 24, self.sh - self.ch - 56   # 右下角，让开任务栏
 
@@ -442,6 +464,7 @@ class Pet:
                             self.skin, frame, flip=flip)
 
         # 图里没画牌子（占位团子、或者皮肤缺这个动作）就在头顶补画一块
+        self.topmost(sign is not None and self.sign_room > 0)
         self.canvas.delete("overlay")
         if sign is not None and act is None and (not self.skin or drawn != sign["expr"]):
             if sign["expr"] == "qr":
@@ -489,62 +512,118 @@ class Pet:
 
     # ------------------------------------------------------------------ 气泡
     def show_bubble(self, it):
-        """说话气泡：蓝色云朵 + 白字，大小正好包住文字，尾巴指向她。"""
+        """说话气泡：蓝色云朵 + 白字。
+
+        摆法：优先放在她头顶上方（尾巴朝下指着她）；上面放不下就放左边，再不行放右边，
+        两种情况都**和她留出一条缝、不压在她身上**。
+        窗口只建一次；她挪位置时 _layout_bubble 重算位置、重画画布，不重建窗口。
+        """
         from tkinter import font as tkfont
         if self.bubble is not None:
             self.bubble.destroy()
             self.bubble = None
+        self.bubble_item = None
         if it is None:
             return
         text = it["text"]
         urgent = it["kind"] == "sign"
         buttons = it.get("buttons") or []
         closable = not urgent and not buttons
-
         f = tkfont.Font(font=(FONT, 9, "bold") if urgent else (FONT, 9))
-        lines = text.split("\n") or [""]
-        tw = max(f.measure(ln) for ln in lines)                 # 文字实际宽度
+        lines = text.split(chr(10)) or [""]
+        tw = max(f.measure(ln) for ln in lines)
         th = f.metrics("linespace") * len(lines)
         bw = int(min(max(tw + 44 + (110 if buttons else 16 if closable else 0), 120), 430))
         bh = int(th + 26)
-        TAIL = 12
+        # 尾巴长度跟着这一侧算：朝上的尾巴会伸进「她头顶以上」那段空间，得让出来，
+        # 不然算「上面放得下吗」会算错，气泡贴到她的脚边
+        self.bubble_gap = max(TAIL, int(self.head_y - bh - GAP))
+        self.bubble_item, self.bubble_dim = it, (bw, bh)
+        self.bubble_urgent, self.bubble_buttons, self.bubble_closable = urgent, buttons, closable
 
         b = tk.Toplevel(self.root)
         b.overrideredirect(True)
         b.attributes("-topmost", True)
         b.configure(bg=KEY)
         b.wm_attributes("-transparentcolor", KEY)
-        c = tk.Canvas(b, width=bw, height=bh + TAIL, bg=KEY, highlightthickness=0)
-        c.pack()
+        self.bubble_canvas = tk.Canvas(b, width=bw, height=bh + self.bubble_gap + GAP, bg=KEY,
+                                       highlightthickness=0)
+        self.bubble_canvas.pack()
+        self.bubble = b
+        self._layout_bubble()
 
-        # 尾巴朝着她：气泡在左就在右下角、在右就在左下角
-        left_side = self.bubble_side()
-        tx = bw - 30 if left_side else 30
-        cloud(c, 4, 4, bw - 4, bh - 4, tail=(tx, bh + TAIL - 2))
+    def _layout_bubble(self):
+        """按她当前位置算气泡在哪、尾巴朝哪，然后重画。"""
+        it = getattr(self, "bubble_item", None)
+        if self.bubble is None or it is None:
+            return
+        from tkinter import font as tkfont
+        bw, bh = self.bubble_dim
+        px, py, pw, ph = self.root.winfo_x(), self.root.winfo_y(), self.cw, self.ch
+        # 她的头和脸在哪（不是窗口/脚）：气泡要贴着这里
+        face_top = py + self.head_top + 18
+        face_mid = py + self.head_top + self.base_h * 0.45
+        gap = getattr(self, "bubble_gap", TAIL)
+        above_y = face_top - bh - GAP - gap
+        left_x = px - bw - GAP - TAIL
+        right_x = px + pw + GAP + TAIL
+        if above_y >= 0:                            # 头顶放得下：放头顶正中
+            side = "above"
+            bx = min(max(px + pw // 2 - bw // 2, 4), self.sw - bw - 4)
+            by = above_y
+        elif left_x >= 0:                           # 放不下就往左，气泡和她头齐平
+            side, bx, by = "left", left_x, min(max(face_mid - bh / 2, 4), self.sh - bh - 4)
+        elif right_x + bw <= self.sw:
+            side, bx, by = "right", right_x, min(max(face_mid - bh / 2, 4), self.sh - bh - 4)
+        else:                                       # 屏幕太挤，只好压一点
+            side = "left"
+            bx, by = max(self.sw - bw - 4, 4), min(max(face_mid - bh / 2, 4), self.sh - bh - 4)
 
-        lbl = tk.Label(c, text=text, bg=CLOUD, fg=CLOUD_TEXT,
-                       font=(FONT, 9, "bold") if urgent else (FONT, 9),
+        # 重画会把文字控件重建一遍；走的时候每秒调 25 次，只有位置真的变了才重画
+        now = time.time()
+        if (getattr(self, "_bub_at", None) == (bx, by)
+                and now - getattr(self, "_bub_draw_at", 0) < 2.0):
+            return
+        self._bub_at = (bx, by)
+        self._bub_draw_at = now
+        if side == "above":
+            tipx = min(max(px + pw * 0.45 - bx, 30), bw - 30)       # 尾巴落在她头顶
+            tail = (tipx, bh - 6, tipx, bh + GAP + gap, 8)
+        elif side == "left":                        # 尾巴指向她的脸
+            tipy = min(max(face_mid - by, 20), bh - 20)
+            tail = (bw - 6, tipy, bw + TAIL - 1, tipy, 7)
+        else:
+            tipy = min(max(face_mid - by, 20), bh - 20)
+            tail = (6, tipy, 1, tipy, 7)
+
+        c = self.bubble_canvas
+        c.delete("all")
+        cloud(c, 4, 4, bw - 4, bh - 4, tail=tail)
+        lbl = tk.Label(c, text=it["text"], bg=CLOUD, fg=CLOUD_TEXT,
+                       font=(FONT, 9, "bold") if self.bubble_urgent else (FONT, 9),
                        justify="left", anchor="w", cursor="hand2")
         c.create_window(20, bh / 2, window=lbl, anchor="w")
-
         widgets = [lbl]
-        if buttons:
-            for k, (label, cb) in enumerate(buttons):
+        if self.bubble_buttons:
+            n = len(self.bubble_buttons)
+            for k, (label, cb) in enumerate(self.bubble_buttons):
                 bt = tk.Button(c, text=label, bg="#ffffff", fg=CLOUD, relief="flat", bd=0,
                                activebackground="#e6f1ff", activeforeground=CLOUD,
                                padx=8, pady=1, font=(FONT, 9), cursor="hand2",
                                command=lambda it=it, cb=cb: self.answer(it, cb))
-                c.create_window(bw - 18, bh / 2 + (k - (len(buttons) - 1) / 2.0) * 26,
-                                window=bt, anchor="e")
+                c.create_window(bw - 18, bh / 2 + (k - (n - 1) / 2.0) * 26, window=bt, anchor="e")
                 widgets.append(bt)
-        elif closable:
+        elif self.bubble_closable:
             x = tk.Label(c, text="×", bg=CLOUD, fg=CLOUD_HINT, font=(FONT, 11), cursor="hand2")
             c.create_window(bw - 14, 16, window=x, anchor="e")
             x.bind("<Button-1>", lambda e, it=it: self.dismiss(it))
         for w in widgets:
             w.bind("<Button-1>", lambda e, it=it: self.click_bubble(it))
-        self.bubble = b
-        self.place_bubble(bh + TAIL)
+        self.bubble.geometry("%dx%d+%d+%d" % (bw, bh + gap + GAP, bx, by))
+
+    def place_bubble(self, height=None):
+        """她挪了位置（拖动、溜达）：气泡跟着重摆一次。"""
+        self._layout_bubble()
 
     def bubble_side(self):
         """气泡放在她左边还是右边（屏幕放得下的话左）。"""
