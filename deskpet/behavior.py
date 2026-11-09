@@ -17,10 +17,14 @@
 走路类的图只画朝右的，朝左时程序镜像；翻滚只要一张抱成球的 roll_1，程序转 4 个角度。
 """
 
+import math
 import random
 import time
 
-HOME_RANGE = 450           # 离家最远多少像素
+HOME_RANGE = 450           # 离家最远多少像素（横向）
+HOME_RISE = 160            # 最多比家高多少像素（往上溜达，不会往下钻进任务栏）
+TRIP_LEGS = (1, 4)         # 一趟溜达分几段：走一段、停一下、再走
+CROSS_CHANCE = 0.08        # 偶尔来一趟「路过」：横穿大半个屏幕再回家
 MOVE_MS = 40               # 移动时窗口挪位置的间隔（比动画 tick 密，走起来不卡）
 
 # 小动作：名字 -> (表情, 持续秒数, 需要的图)。需要的图没有就不做这个动作。
@@ -85,6 +89,11 @@ class Behavior:
 
     def step(self, now, t):
         cfg = self.pet.cfg
+        if self.move and self.move.get("pause"):
+            # 两段之间歇脚：有动作就做动作，没有就站着（朝着刚才走的方向）
+            if self.action and now < self.action["until"]:
+                return self.action["expr"], self.action["flip"], FAST.get(self.action["name"])
+            return ("idle", self.move["dir"] < 0, 7)
         if self.move:
             return self._move_frame(t)
         if self.action:
@@ -127,60 +136,117 @@ class Behavior:
 
     # ------------------------------------------------------------------ 移动
     def _start_move(self):
+        """规划一趟溜达：几个随机的落脚点，走一段停一下，最后不一定回到原地。
+
+        之前每趟都是「在一条水平线上随便挑个 x 直线走过去」，加上家贴着屏幕边，
+        看起来永远是同一条线来回 —— 现在落脚点是二维的、分好几段、每段走法和路线都不一样。
+        """
         stats = getattr(self.pet, "stats", None)
         if stats and not stats.can_wander():
             return False                                     # 累了，不想动
-        styles = [s for s, (_, need, fallback) in MOVES.items()
-                  if self.has(need) or (fallback and self.has(fallback))]
-        if not styles:
+        if not self._styles():
             return False
-        # 有专门的图的走法优先；还没出图的时候普通走、小跳最常见
-        weights = [3 if self.has(MOVES[s][1]) else 1 for s in styles]
-        style = random.choices(styles, weights)[0]
-
         p = self.pet
-        x, y = p.root.winfo_x(), p.root.winfo_y()
-        home = p.home_x if p.home_x is not None else x
-        lo = max(10, home - HOME_RANGE)
-        hi = min(p.sw - p.cw - 10, home + HOME_RANGE)
-        if hi - lo < 120:
+        x, y = float(p.root.winfo_x()), float(p.root.winfo_y())
+        lo_x, hi_x, lo_y, hi_y = self._area()
+        if hi_x - lo_x < 120:
             return False
-        for _ in range(10):
-            target = random.uniform(lo, hi)
-            if abs(target - x) >= 100:
-                break
+        if random.random() < CROSS_CHANCE:
+            # 路过：先走到区域另一头，再回到家附近
+            far = lo_x if x - lo_x > hi_x - x else hi_x
+            stops = [(far, y), (random.uniform(lo_x, hi_x), self.pet.home_y)]
         else:
-            return False
-        self.move = {"style": style, "x": float(x), "target": target,
-                     "dir": 1 if target > x else -1, "base_y": y, "k": 0}
+            stops, cx, cy = [], x, y
+            for _ in range(random.randint(*TRIP_LEGS)):
+                for _ in range(12):
+                    tx, ty = random.uniform(lo_x, hi_x), random.uniform(lo_y, hi_y)
+                    if abs(tx - cx) + abs(ty - cy) >= 90:
+                        break
+                stops.append((tx, ty))
+                cx, cy = tx, ty
+        self.move = {"stops": stops, "x": x, "y": y}
+        self._next_leg()
         p.root.after(MOVE_MS, self._tick_move)
         return True
+
+    def _styles(self):
+        return [st for st, (_, need, fallback) in MOVES.items()
+                if self.has(need) or (fallback and self.has(fallback))]
+
+    def _area(self):
+        """能溜达的范围：家附近，但家贴着屏幕边时整体往里挪，两边都有地方走。"""
+        p = self.pet
+        min_x, max_x = 10, p.sw - p.cw - 10
+        lo, hi = p.home_x - HOME_RANGE, p.home_x + HOME_RANGE
+        if lo < min_x:
+            hi, lo = min(max_x, hi + (min_x - lo)), min_x
+        if hi > max_x:
+            lo, hi = max(min_x, lo - (hi - max_x)), max_x
+        base = min(p.home_y, p.sh - p.ch - 40)
+        return lo, hi, max(10, base - HOME_RISE), base
+
+    def _next_leg(self):
+        """开始下一段：换个走法，路线带一点弧度。"""
+        m = self.move
+        tx, ty = m["stops"].pop(0)
+        styles = self._styles()
+        weights = [3 if self.has(MOVES[st][1]) else 1 for st in styles]
+        dist = ((tx - m["x"]) ** 2 + (ty - m["y"]) ** 2) ** 0.5
+        if dist > 350:                                        # 远的时候不背手慢慢踱
+            weights = [w * (0.3 if st == "stroll" else 1) for st, w in zip(styles, weights)]
+        style = random.choices(styles, weights)[0]
+        m.update(style=style, sx=m["x"], sy=m["y"], tx=tx, ty=ty, dist=max(dist, 1.0),
+                 done=0.0, k=0, dir=1 if tx >= m["x"] else -1,
+                 bend=random.uniform(-0.25, 0.25) * min(dist, 300))   # 弧线鼓出去多少
 
     def _tick_move(self):
         m = self.move
         if m is None:
             return
+        if m.get("pause", 0) > 0:                            # 两段之间停一下（step 里放动作）
+            m["pause"] -= 1
+            if m["pause"] == 0:
+                self.action = None
+                self._next_leg()
+            self.pet.root.after(MOVE_MS, self._tick_move)
+            return
         speed = MOVES[m["style"]][0]
         m["k"] += 1
-        y = m["base_y"]
+        lift = 0
         if m["style"] == "hop":
             # 只在空中往前移，下蹲和落地时原地不动；平均速度和设定的一样
             lift, _, moving = hop_pose(m["k"])
             if moving:
-                m["x"] += speed * HOP_TICKS / HOP_AIR * m["dir"]
-            y = m["base_y"] - lift
+                m["done"] += speed * HOP_TICKS / HOP_AIR
         else:
-            m["x"] += speed * m["dir"]
+            m["done"] += speed
         if (m["style"] in ("walk", "stroll") and not self.has(m["style"])
-              and not (m["style"] == "stroll" and self.has("walk"))):
+                and not (m["style"] == "stroll" and self.has("walk"))):
             # 还没有走路图：拿站着的图走会像在平移滑行，加一点一颠一颠的
-            y = m["base_y"] - (2 if (m["k"] // 5) % 2 else 0)
-        done = (m["x"] - m["target"]) * m["dir"] >= 0
+            lift = 2 if (m["k"] // 5) % 2 else 0
+        # 沿着一条略弯的线走：直线插值 + 垂直方向鼓出 bend * sin
+        f = min(m["done"] / m["dist"], 1.0)
+        dx, dy = m["tx"] - m["sx"], m["ty"] - m["sy"]
+        off = m["bend"] * math.sin(math.pi * f)
+        nx, ny = -dy / m["dist"], dx / m["dist"]
+        lo_x, hi_x, lo_y, hi_y = self._area()
+        # 弧线鼓出去也不能越界：往下会压到任务栏，往上会离家太远
+        m["x"] = max(lo_x, min(hi_x, m["sx"] + dx * f + nx * off))
+        m["y"] = max(lo_y, min(hi_y, m["sy"] + dy * f + ny * off))
+        done = f >= 1.0
         if done and m["style"] == "hop" and m["k"] % HOP_TICKS:
             done = False                                     # 跳到一半不停，整跳做完再停
-        self.pet.root.geometry("+%d+%d" % (int(m["x"]), y))
+        self.pet.root.geometry("+%d+%d" % (int(m["x"]), int(m["y"]) - lift))
         self.pet.place_bubble()
         if done:
+            self.pet.root.geometry("+%d+%d" % (int(m["x"]), int(m["y"])))
+            if m["stops"]:
+                # 段间停一下：有时张望 / 扭头，有时就站着
+                m["pause"] = random.randint(15, 60)          # 0.6 ~ 2.4 秒
+                if random.random() < 0.6:
+                    self._start_action(time.time(), random.choice(["look", "turn", "wave"]))
+                self.pet.root.after(MOVE_MS, self._tick_move)
+                return
             style = m["style"]
             self._stop_move(save=True)
             if getattr(self.pet, "stats", None):
@@ -198,7 +264,7 @@ class Behavior:
         m, self.move = self.move, None
         if m is None:
             return
-        self.pet.root.geometry("+%d+%d" % (int(m["x"]), m["base_y"]))
+        self.pet.root.geometry("+%d+%d" % (int(m["x"]), int(m["y"])))
         if save:
             self.pet.save_pos(home=False)
 
