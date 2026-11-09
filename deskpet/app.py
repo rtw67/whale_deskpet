@@ -362,14 +362,14 @@ class Pet:
             return
         log("右键：打开菜单")
         items = [
-            {"label": "消息", "tip": "最近的提醒", "cb": self.recent_entries, "sub": True},
-            {"label": "互动", "tip": "玩 · 喂饭 · 状态", "cb": self.interact_entries, "sub": True},
+            {"label": "消息", "tip": "最近提醒", "cb": self.recent_entries, "sub": True},
+            {"label": "互动", "cb": self.interact_entries, "sub": True},
         ]
         for more in self.ext.call("menu_items", self):
             items += list(more or [])
         items += [
-            {"label": "归位", "tip": "回到右下角", "cb": self.reset_pos},
-            {"label": "退出", "tip": "让她下班", "cb": self.quit},
+            {"label": "归位", "cb": self.reset_pos},
+            {"label": "退出", "cb": self.quit},
         ]
         self.root.update_idletasks()             # 窗口刚建好还没摆到位时，读到的坐标会是 0
         x, y = self.root.winfo_rootx(), self.root.winfo_rooty()
@@ -379,9 +379,9 @@ class Pet:
     def interact_entries(self):
         """「互动」子菜单：一起玩、喂饭、看状态。"""
         return [
-            {"label": "玩", "tip": "一起玩", "cb": self.play_entries, "sub": True},
-            {"label": "喂饭", "tip": "喂一碗白饭", "cb": self.feed},
-            {"label": "状态", "tip": "好感度 / 心情 / 体力", "cb": self.show_status},
+            {"label": "玩", "cb": self.play_entries, "sub": True},
+            {"label": "喂饭", "tip": "喂白饭", "cb": self.feed},
+            {"label": "状态", "tip": "看数值", "cb": self.show_status},
         ]
 
     def play_entries(self):

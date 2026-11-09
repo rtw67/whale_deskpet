@@ -5,8 +5,8 @@
     menu.open(cx, cy, items, side)      # cx, cy 是她在屏幕上的中心点
 
 每个泡泡是一个 dict（也兼容老写法的 tuple）：
-    {"label": "消息",                   泡泡上的字（两三个字；有图标时不显示）
-     "tip": "18:24 构建完成",            悬停时外侧标签显示的完整说明，默认 = label
+    {"label": "消息",                   泡泡上的字，**2~3 个字**（有图标时不显示，也别拿它当说明用）
+     "tip": "构建完成",                  悬停时外侧标签的说明，也是 2~3 个字，默认 = label
      "cb": 回调,                         普通项：点了先收起菜单再执行；None = 灰掉不能点
      "sub": True,                        子菜单项：cb 返回下一层的泡泡列表
      "icon": "job"}                      可选：用皮肤里的 menu_job.png 当图标
@@ -233,6 +233,8 @@ class BubbleMenu:
         start = center + span / 2
         out = []
         for i, it in enumerate(items):
+            if len(it["label"]) > 3:          # 名字只能是两三个字
+                self.log("泡泡名太长：%s（提示：%s）" % (it["label"], it["tip"]))
             a = math.radians(start - i * step)
             out.append((o + R * math.cos(a), o - R * math.sin(a), it))
         return out
