@@ -54,8 +54,8 @@ FOLD_FRAMES = 5            # 缩回去的帧数
 # 皮肤里自带的备用图标：msg play feed status home exit back prev next job work perf daily qr
 # dnd refresh calendar today chat alarm timer gift trophy outfit sleep sound mute more ok close
 # add delete search folder log power save team help fish dice gear start pause music
-ICON_KEYS = {"消息": "msg", "玩": "play", "喂饭": "feed", "状态": "status", "归位": "home",
-             "退出": "exit", "返回": "back", "上一页": "prev", "下一页": "next"}
+ICON_KEYS = {"消息": "msg", "互动": "interact", "玩": "play", "喂饭": "feed", "状态": "status",
+             "归位": "home", "退出": "exit", "返回": "back", "上一页": "prev", "下一页": "next"}
 DARK_LABELS = ("退出", "返回")
 
 

@@ -13,7 +13,8 @@ from deskpet.play import MOVE_MS, move_pet
 NAME = "chase"
 TITLE = "追鼠标"
 INVITE = "好无聊…要不要陪我玩追鼠标？"
-DESC = "追鼠标：她来追你的鼠标，点她就算抓到"
+DESC = "追你鼠标"
+ICON = "chase"                 # 右键「玩」里用的图标（皮肤里的 menu_chase.png）
 NEED = ("walk",)
 
 SPEED = 6.0                # 每 MOVE_MS 跑几像素（约 150 像素/秒）

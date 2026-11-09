@@ -45,6 +45,10 @@ python tools/slice_sheet.py skins/whale/source/menu_icons_source.png --cols 7 --
 python tools/slice_sheet.py skins/whale/source/menu_icons2_source.png --cols 8 --rows 1 --scale 4.45 --names menu_home2,menu_gear,menu_start,menu_pause,menu_music,menu_exit2,menu_play,menu_back
 python tools/slice_sheet.py skins/whale/source/menu_icons3_source.png --cols 4 --rows 4 --scale 5.11 --names menu_feed,menu_status,menu_job,menu_dnd,menu_refresh,menu_calendar,menu_today,menu_chat,menu_alarm,menu_timer,menu_gift,menu_trophy,menu_outfit,menu_sleep,menu_sound,menu_mute
 python tools/slice_sheet.py skins/whale/source/menu_icons4_source.png --cols 4 --rows 4 --scale 4.93 --names menu_more,menu_prev,menu_next,menu_ok,menu_close,menu_add,menu_delete,menu_search,menu_folder,menu_log,menu_power,menu_save,menu_team,menu_help,menu_fish,menu_dice
+python tools/slice_sheet.py skins/whale/source/menu_icons5_source.png --cols 4 --rows 3 --scale 5.57 --names menu_interact,menu_home,menu_chase,menu_back,menu_prev,menu_next,menu_fish,menu_ball,menu_music,menu_feed,menu_status,menu_trick
+python tools/slice_sheet.py skins/whale/source/menu_icons6_source.png --cols 4 --rows 3 --scale 5.32 --names menu_msg,menu_pin,menu_bell,menu_mute,menu_work,menu_perf,menu_daily,menu_qr,menu_job,menu_clock,menu_flag,menu_search
 ```
 
-图标的悬停版：同样的命令，`--scale` 分别换成 5 / 3.71 / 4.26 / 4.11，名字加 `_hover` 后缀。
+图标的悬停版：同样的命令，`--scale` 分别换成 5 / 3.71 / 4.26 / 4.11 / 4.64 / 4.43，名字加 `_hover` 后缀。
+后两张（icons5 / icons6）是第二批，重画了前面几张里的同名图标，**要最后切**，才会覆盖掉旧的。
+缩放倍数 = 这张图里泡泡的直径 ÷ 49（第一张 292 像素对应 6 倍）。

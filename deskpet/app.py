@@ -386,7 +386,7 @@ class Pet:
 
     def play_entries(self):
         """「玩」子菜单：能玩的游戏，点了直接开始（你主动叫的，不用再发邀请）。"""
-        return [{"label": m.TITLE, "tip": getattr(m, "DESC", m.TITLE),
+        return [{"label": m.TITLE, "tip": getattr(m, "DESC", m.TITLE), "icon": getattr(m, "ICON", None),
                  "cb": lambda m=m: self.play.start_now(m)} for m in self.play.available()]
 
     def recent_entries(self):
