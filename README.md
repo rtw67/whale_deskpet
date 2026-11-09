@@ -24,8 +24,8 @@
 需要 Windows + Python 3.8 以上（自带 tkinter）。
 
 ```
-git clone <仓库地址> desktop-pet
-cd desktop-pet
+git clone https://github.com/rtw67/whale_deskpet.git
+cd whale_deskpet
 pythonw pet.py          # 或者双击 pet.bat
 ```
 
@@ -128,8 +128,8 @@ Pure Python standard library (tkinter) — **no pip install needed**.
 Windows + Python 3.8+ (with tkinter).
 
 ```
-git clone <repo-url> desktop-pet
-cd desktop-pet
+git clone https://github.com/rtw67/whale_deskpet.git
+cd whale_deskpet
 pythonw pet.py          # or double-click pet.bat
 ```
 
