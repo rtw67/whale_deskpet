@@ -27,6 +27,7 @@
 import ctypes
 import math
 import os
+import time
 
 import tkinter as tk
 
@@ -117,6 +118,7 @@ class BubbleMenu:
         self.stack = []            # 每一层 {"items", "page", "sub"}，最后一个是当前这层
         self.targets = []          # 当前这层每个泡泡的最终位置 [(x, y, item)]
         self.animating = False
+        self.clicked_at = 0.0      # 画布最后一次收到点击的时间
         self.phase = None          # 正在播的动画：pop（冒出来）/ fold（缩回去）
         self.anim = 0              # 动画编号：开新动画后，旧动画剩下的帧自己停掉
         self.timer = None
@@ -306,10 +308,7 @@ class BubbleMenu:
         label = it["label"]
         icon = self._icon(it)
         if icon:
-            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身。
-            # 底下垫一个实心圆：窗口的透明色会让点击穿透，图里透明的像素点下去会漏到别的窗口
-            r = D / 2 - 3
-            c.create_oval(x - r, y - r, x + r, y + r, fill=BUBBLE, outline="", tags=tag)
+            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身
             c.create_image(x, y, image=icon[0], tags=tag)
         else:
             fill = DISABLED if it.get("cb") is None else DANGER if _dark(it) else BUBBLE
@@ -335,7 +334,7 @@ class BubbleMenu:
         icon = self._icon(it)
         o = self.size / 2
         items = c.find_withtag(tag)
-        img = items[-1]                              # 图标泡泡：最后一个是图（前面是垫底的圆）
+        img = items[0]
 
         def enter(e):
             if self.animating:
@@ -389,8 +388,14 @@ class BubbleMenu:
         return None
 
     def _canvas_click(self, e):
+        self.clicked_at = time.time()
         it = self._target_at(e.x, e.y)
         if it is not None and it.get("cb") is not None:
+            self._click(it)
+
+    def _missed_click(self, it, t):
+        if self.win is not None and self.clicked_at < t - 0.3 and it in [p[2] for p in self.targets]:
+            self.log("菜单：点击从透明处漏了，补上「%s」" % it["label"])
             self._click(it)
 
     def _click(self, it):
@@ -423,6 +428,12 @@ class BubbleMenu:
         down = _mouse_down()
         if down and not self.was_down:                 # 刚按下去的那一刻
             x, y = self.root.winfo_pointerxy()
+            it = self._target_at(x - self.win.winfo_rootx(), y - self.win.winfo_rooty())
+            if it is not None and it.get("cb") is not None:
+                # 点在泡泡上，但窗口的透明色会让点击穿透：图标里透明的像素点下去，
+                # 画布收不到。过一会儿看画布收到没有，没收到就替它点
+                t = time.time()
+                self.root.after(150, lambda: self._missed_click(it, t))
             if not (self._on_bubble(x, y) or self._inside(self.owner, x, y)):
                 self.close("点到别处 (%d,%d) %s" % (x, y, self._where(x, y)))
                 self.watching = False
