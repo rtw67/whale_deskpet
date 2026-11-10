@@ -15,7 +15,7 @@
 - **待机**：发呆、眨眼、伸懒腰、打哈欠、挥手、摸鱼、跳舞……隔一阵在「家」附近溜达：随机几个落脚点、走一段歇一下，走法（走、背手踱步、小跳、翻滚）和路线每段都不一样，偶尔横穿屏幕「路过」。
 - **一起玩**：闲得久了会邀请你玩「追鼠标」或「捉迷藏」（她从屏幕边探头，缩回去之前点到她算捉到）；也可以右键「玩」主动开始。玩法是插件，可以自己加。
 - **好感度 / 心情 / 体力**：摸摸、喂饭、陪玩都会涨好感，好感越高解锁越多台词。只加分、不惩罚、不需要每天照顾。
-- **聊天**（默认关）：右键「聊天」和她说话。可以接本机的 Claude Code，也可以在配置里直接填接口地址和 key（Anthropic 格式或 OpenAI 兼容格式，DeepSeek 之类都行）。只聊天，不会动你的文件。配置写法见 [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py) 开头。
+- **聊天**（默认关）：右键「聊天」和她说话。可以接本机的 Claude Code，也可以在配置里直接填接口地址和 key（Anthropic 格式或 OpenAI 兼容格式，DeepSeek 之类都行）。只聊天，不会动你的文件。人设跟着皮肤走（鲸鱼娘的在 [`skins/whale/persona.md`](skins/whale/persona.md)），说话时还会参考她当前的好感、心情、体力和时间。配置写法见 [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py) 开头。
 - **右键泡泡菜单**：多层、自动分页、像素风图标。
 - **云朵气泡**：蓝色云朵形状、白字，大小随文字自动收放，小尾巴指向她。
 - **休息时间**：下班和周末她会睡觉（时间可配）。
@@ -123,7 +123,8 @@ Pure Python standard library (tkinter) — **no pip install needed**.
   Positive only: no penalties, no daily chores.
 - **Chat** (off by default) — right-click → Chat to talk to her, either through your local Claude Code
   or straight to an API set in the config (Anthropic or OpenAI-compatible format, e.g. DeepSeek).
-  Chat only — no file access. See the top of [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py).
+  Chat only — no file access. The persona lives with the skin ([`skins/whale/persona.md`](skins/whale/persona.md))
+  and her current affection / mood / energy / time of day are passed along. See the top of [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py).
 - **Bubble menu** — multi-level, auto-paginated, pixel-art icons.
 - **Cloud speech bubbles** — blue cloud shape with white text, sized to the text, with a little tail pointing at her.
 - **Rest hours** — she sleeps outside working hours and on weekends (configurable).

@@ -37,7 +37,9 @@
     backend          claude     claude 或 api
     model            sonnet     claude 时是 claude --model 的值；api 时 api.model 没写就用它
     claude           ""         claude 命令的路径，空 = 从 PATH 里找
-    persona          ""         人设，空 = 用下面的 PERSONA
+    persona          ""         人设（直接写一段文字），优先级最高
+    persona_file     ""         人设文件（相对项目根目录或绝对路径）
+                                都没写就用皮肤目录里的 persona.md，再没有就用下面的 PERSONA
     timeout          120        一句话最多等几秒
     session_minutes  30         多久没说话就开新话题（点「新话题」也行）
 """
@@ -53,13 +55,19 @@ import time
 import urllib.error
 import urllib.request
 
+from datetime import datetime
+
 import tkinter as tk
 
+from deskpet import sprite
 from deskpet.card import link, panel, place_near
+from deskpet.util import ROOT
 from deskpet.theme import BG, BTN2_BG, BTN_BG, BTN_FG, DETAIL_FG, FONT, MSG_FG
 
 NAME = "chat"
 
+WEEKDAYS = "一二三四五六日"
+# 皮肤里没有 persona.md 时的人设
 PERSONA = ("你是住在用户电脑桌面上的桌宠「{name}」，一个蓝色头发、穿女仆装的 Q 版鲸鱼娘。"
            "说话口语化、温柔可爱，可以偶尔用「～」。回答简短，一般三四句话以内；"
            "用户要详细解释或代码时再展开。不要用 Markdown 标题和表格。")
@@ -108,10 +116,48 @@ def _command(c):
     return [exe]
 
 
-def _ask(pet, text, conv):
+def _persona(pet):
+    """人设 + 她此刻的状态。在主线程里调（要读 pet.stats）。
+
+    人设里的 {name} 换成她的名字（用 replace，人设正文里可以随便出现别的大括号）。
+    """
+    c = _cfg(pet)
+    text = c.get("persona")
+    if not text:
+        path = c.get("persona_file") or os.path.join(sprite.SKIN_DIR, "persona.md")
+        if not os.path.isabs(path):
+            path = os.path.join(ROOT, path)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            text = PERSONA
+    text = text.replace("{name}", pet.cfg.get("name", "鲸鱼娘"))
+    return text.rstrip() + "\n\n" + _state_note(pet)
+
+
+def _state_note(pet):
+    """附在人设后面的「你现在的状态」，让她说话跟桌宠里的数值对得上。"""
+    s = pet.stats
+    _, title, _, _ = s.level()
+    now = datetime.now()
+    try:
+        days = (now.date() - datetime.strptime(s.first_seen, "%Y-%m-%d").date()).days + 1
+    except (TypeError, ValueError):
+        days = 1
+    lines = ["## 你现在的状态",
+             "- 好感等级：%s（和用户认识第 %d 天）" % (title, days),
+             "- 心情：%s" % s.mood_word(),
+             "- 体力：%s" % s.energy_word(),
+             "- 现在：周%s %s" % (WEEKDAYS[now.weekday()], now.strftime("%H:%M"))]
+    if pet.off_duty():
+        lines.append("- 现在是你的休息时间，你本来在睡觉，被叫醒来聊天")
+    return "\n".join(lines)
+
+
+def _ask(pet, text, conv, persona):
     """后台线程里跑：问一句，把 (回复, 新的 conv, 出错信息) 放进队列。"""
     c = _cfg(pet)
-    persona = c.get("persona") or PERSONA.format(name=pet.cfg.get("name", "鲸鱼娘"))
     if c.get("backend") == "api":
         try:
             reply, conv = _ask_api(c, persona, text, conv or [])
@@ -235,7 +281,7 @@ def send(pet, text):
     _s["log"].append(("me", text))
     pet.log("聊天：发了一句（%d 字）" % len(text))
     pet.set_sign("chat", expr="look", text=None, on_click=lambda: open_window(pet), priority=-1)
-    threading.Thread(target=_ask, args=(pet, text, _s["conv"]), daemon=True).start()
+    threading.Thread(target=_ask, args=(pet, text, _s["conv"], _persona(pet)), daemon=True).start()
     _render()
 
 
