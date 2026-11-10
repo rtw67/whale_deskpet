@@ -6,6 +6,7 @@
     pythonw pet.py --ext-dir D:/my_ext   额外加载一个扩展目录（可以写多次）
     python pet.py --say "构建完成"      给正在跑的她发一条提醒（测试用）
     python pet.py --play [chase]        让正在跑的她发一个游玩邀请
+    python pet.py --play hide --now     不发邀请，直接开始玩
 """
 
 import argparse
@@ -20,6 +21,7 @@ def main():
     ap.add_argument("--ext-dir", action="append", default=[], help="额外的扩展目录")
     ap.add_argument("--say", metavar="TEXT", help="给正在跑的她发一条提醒")
     ap.add_argument("--play", nargs="?", const="", metavar="GAME", help="让她发游玩邀请")
+    ap.add_argument("--now", action="store_true", help="配合 --play：不发邀请，直接开始")
     args = ap.parse_args()
 
     port = int(config.load()["port"])
@@ -30,7 +32,7 @@ def main():
         if args.say is not None:
             send({"title": args.say, "message": "", "seconds": 8}, port)
         else:
-            send({"_cmd": "play", "game": args.play or None}, port)
+            send({"_cmd": "play", "game": args.play or None, "now": args.now}, port)
         return 0
 
     from deskpet.app import main as run

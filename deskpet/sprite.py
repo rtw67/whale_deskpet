@@ -26,7 +26,11 @@ from deskpet.util import ROOT
 SKIN_DIR = os.path.join(ROOT, "skins", "whale")      # app 启动时按 config.json 的 skin 改
 EXPRESSIONS = ("idle", "blink", "talk", "alarm", "qr", "happy", "sleep", "eat", "oops",
                "walk", "stroll", "hop", "roll", "dizzy",
-               "stretch", "yawn", "look", "wave", "fish", "sit", "dance", "dust")
+               "stretch", "yawn", "look", "wave", "fish", "sit", "dance", "dust",
+               # 捉迷藏探头用（可选）：只画伸出来的那部分，图的边就是屏幕边
+               "peek_side", "peek_side_oops", "peek_top", "peek_top_oops")
+# 不算进窗口大小的表情：探头图只露半截，形状和站着的不一样
+NO_SIZE = ("peek_side", "peek_side_oops", "peek_top", "peek_top_oops")
 
 SCALE = 4              # 一个像素画成 4×4
 W, H = 16, 15          # 网格大小
@@ -150,7 +154,7 @@ def size(skin):
     """角色的宽高（像素）：有皮肤取所有帧里最大的，没有就是占位团子的大小。"""
     if not skin:
         return W * SCALE, H * SCALE
-    frames = [f for fs in skin.values() for f in fs]
+    frames = [f for k, fs in skin.items() if k not in NO_SIZE for f in fs]
     return max(f.width() for f in frames), max(f.height() for f in frames)
 
 

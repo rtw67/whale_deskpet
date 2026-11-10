@@ -121,6 +121,8 @@ def main():
     ap.add_argument("--scale", type=float, default=3, help="缩小倍数，可以是小数（几张图之间对齐身高用）")
     ap.add_argument("--out", default=None, help="输出目录，默认和精灵表同目录（在 source/ 里就是上一级）")
     ap.add_argument("--alpha", type=int, default=128, help="透明度 ≥ 这个值才算角色")
+    ap.add_argument("--per-row", action="store_true",
+                    help="每行单独算裁剪框（各行的图大小不一样，比如探头图：一行截在左边、一行截在上边）")
     ap.add_argument("--names", default=None, help="逗号分隔的输出文件名（不含 .png），默认是桌宠的 12 个动作")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
@@ -140,19 +142,31 @@ def main():
         ox, oy = int(col * cw), int(row * chh)
         cells[row * args.cols + col] += [(x - ox, y - oy, rgb[y][x]) for x, y in px]
 
-    # 统一裁剪框：所有格子的并集
-    allx = [p[0] for c in cells for p in c]
-    ally = [p[1] for c in cells for p in c]
-    x0, x1, y0, y1 = min(allx), max(allx) + 1, min(ally), max(ally) + 1
+    # 统一裁剪框：所有格子的并集（--per-row 时每行一个）。同一组的图大小一样，
+    # 桌宠按底边居中画，大小一样换帧时才不会跳
     s = args.scale
-    ow, oh = int(math.ceil((x1 - x0) / s)), int(math.ceil((y1 - y0) / s))
-    print("裁剪框 %dx%d -> 输出 %dx%d" % (x1 - x0, y1 - y0, ow, oh))
+
+    def box(group):
+        allx = [p[0] for c in group for p in c]
+        ally = [p[1] for c in group for p in c]
+        x0, x1, y0, y1 = min(allx), max(allx) + 1, min(ally), max(ally) + 1
+        ow, oh = int(math.ceil((x1 - x0) / s)), int(math.ceil((y1 - y0) / s))
+        print("裁剪框 %dx%d -> 输出 %dx%d" % (x1 - x0, y1 - y0, ow, oh))
+        return x0, y0, ow, oh
+
+    if args.per_row:
+        boxes = []
+        for r in range(args.rows):
+            boxes += [box(cells[r * args.cols:(r + 1) * args.cols])] * args.cols
+    else:
+        boxes = [box(cells)] * len(cells)
 
     out_dir = args.out or os.path.dirname(os.path.abspath(args.sheet))
     if os.path.basename(out_dir) == "source":            # 原图在 source/ 里：输出到皮肤目录
         out_dir = os.path.dirname(out_dir)
     names = args.names.split(",") if args.names else NAMES
     for i, name in enumerate(names[:len(cells)]):
+        x0, y0, ow, oh = boxes[i]
         # 每个输出像素收集它覆盖的源像素
         buckets = {}
         for x, y, c in cells[i]:

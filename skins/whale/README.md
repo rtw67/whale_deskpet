@@ -33,6 +33,7 @@ it is not affiliated with or endorsed by DeepSeek.
 | `sheet_source.png` | 基础表情：idle blink talk alarm qr happy sleep eat oops |
 | `move_source.png` | 移动：walk stroll hop roll dizzy |
 | `actions_source.png` | 小动作：stretch yawn look wave fish sit dance dust |
+| `peek_source.png` | 捉迷藏探头：peek_side（左边探头，右边用镜像）、peek_top（顶上倒挂），各带一张 _oops |
 | `menu_icons*_source.png` | 右键菜单泡泡图标 `menu_*.png`（每个都有 `_hover` 大一号） |
 
 重新切（几张图里角色 / 图标画得大小不一，用小数倍缩放对齐）：
@@ -41,6 +42,7 @@ it is not affiliated with or endorsed by DeepSeek.
 python tools/slice_sheet.py skins/whale/source/sheet_source.png --scale 3
 python tools/slice_sheet.py skins/whale/source/move_source.png --scale 3.1 --names walk_1,walk_2,walk_3,walk_4,stroll_1,stroll_2,stroll_3,stroll_4,hop_1,hop_2,roll_1,dizzy_1
 python tools/slice_sheet.py skins/whale/source/actions_source.png --scale 3.2 --names stretch_1,yawn_1,look_1,wave_1,wave_2,fish_1,fish_2,sit_1,dance_1,dance_2,dust_1,dust_2
+python tools/slice_sheet.py skins/whale/source/peek_source.png --cols 3 --rows 2 --scale 5.9 --per-row --names peek_side_1,peek_side_2,peek_side_oops_1,peek_top_1,peek_top_2,peek_top_oops_1
 python tools/slice_sheet.py skins/whale/source/menu_icons_source.png --cols 7 --rows 1 --scale 6 --names menu_msg,menu_work,menu_perf,menu_daily,menu_qr,menu_home,menu_exit
 python tools/slice_sheet.py skins/whale/source/menu_icons2_source.png --cols 8 --rows 1 --scale 4.45 --names menu_home2,menu_gear,menu_start,menu_pause,menu_music,menu_exit2,menu_play,menu_back
 python tools/slice_sheet.py skins/whale/source/menu_icons3_source.png --cols 4 --rows 4 --scale 5.11 --names menu_feed,menu_status,menu_job,menu_dnd,menu_refresh,menu_calendar,menu_today,menu_chat,menu_alarm,menu_timer,menu_gift,menu_trophy,menu_outfit,menu_sleep,menu_sound,menu_mute
