@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """桌宠的互动玩法。加新玩法 = 在这个目录里加一个 .py，不用改别处。
 
-流程：她闲了很久（而且你人在电脑前）→ 随机挑一个玩法发邀请（气泡带「好呀」「下次吧」）
+流程：她闲了很久（而且你人在电脑前）→ 随机挑一个玩法发邀请（持续时间内点气泡或点她 = 答应）
       → 没理她就过期 → 答应了就开始玩 → 玩完（或者被提醒打断）走回家。
 
 每个玩法文件约定：
@@ -137,7 +137,7 @@ class PlayManager:
         self.cooldown_until = now + float(self.cfg.get("cooldown_minutes", 60)) * 60
         self.invite = self.pet.add_invite(
             mod.INVITE, float(self.cfg.get("invite_seconds", 25)),
-            on_yes=lambda: self._yes(mod), on_no=self.decline, on_expire=self.expire)
+            on_yes=lambda: self._yes(mod), on_expire=self.expire)
         self.pet.log("发出邀请：%s" % mod.TITLE)
         return True
 
@@ -176,10 +176,6 @@ class PlayManager:
             cfg.setdefault("chase_seconds", 45 * stats.play_scale())
         self.game = mod.Play(self.pet, cfg)
         self.game.start()
-
-    def decline(self):
-        self.invite = None
-        self.pet.say("好吧…那我自己玩～", 4, fun=True)
 
     def expire(self):
         self.invite = None

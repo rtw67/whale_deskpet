@@ -162,6 +162,19 @@ class Pet:
             return
         self.behavior.interrupt()
         self.drag = (e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y(), False)
+        # 按住不动 0.6 秒 = 长按：打开状态卡片，松手时不再算点击
+        self._hold = self.root.after(600, self.on_hold)
+
+    def on_hold(self):
+        self._hold = None
+        if self.drag and not self.drag[4]:
+            self.drag = None
+            self.show_status()
+
+    def _cancel_hold(self):
+        if getattr(self, "_hold", None):
+            self.root.after_cancel(self._hold)
+            self._hold = None
 
     def on_motion(self, e):
         if not self.drag:
@@ -169,11 +182,13 @@ class Pet:
         x0, y0, wx, wy, moved = self.drag
         dx, dy = e.x_root - x0, e.y_root - y0
         if moved or abs(dx) + abs(dy) > 4:
+            self._cancel_hold()
             self.drag = (x0, y0, wx, wy, True)
             self.root.geometry("+%d+%d" % (wx + dx, wy + dy))
             self.place_bubble()
 
     def on_release(self, e):
+        self._cancel_hold()
         if not self.drag:
             return
         moved = self.drag[4]
@@ -199,7 +214,13 @@ class Pet:
             self.stats.event(name)
             self.ext.call("on_event", self, name)
             return
-        if p.get("_cmd") == "play":                      # python pet.py --play
+        if p.get("_cmd") == "play":                      # python pet.py --play [--now]
+            if p.get("now"):
+                mods = self.play.available()
+                mod = next((m for m in mods if m.NAME == p.get("game")), None) or                     (random.choice(mods) if mods else None)
+                if mod:
+                    self.play.start_now(mod)
+                return
             if not self.play.invite_now(now, p.get("game")):
                 self.say("现在不方便玩～", 3, fun=True)
             return
@@ -253,11 +274,10 @@ class Pet:
         self.items.append({"kind": TRANSIENT, "msg": None, "at": time.time(), "text": text,
                            "expires": time.time() + seconds, "fun": fun})
 
-    def add_invite(self, text, seconds, on_yes, on_no, on_expire):
-        """带「好呀」「下次吧」按钮的邀请气泡，seconds 秒没理就过期。"""
+    def add_invite(self, text, seconds, on_yes, on_expire):
+        """邀请气泡：seconds 秒内点气泡或点她就是答应，没理就过期。"""
         it = {"kind": PERSIST, "msg": None, "at": time.time(), "text": text,
-              "expires": time.time() + seconds, "on_expire": on_expire,
-              "buttons": [("好呀", on_yes), ("下次吧", on_no)]}
+              "expires": time.time() + seconds, "on_expire": on_expire, "on_yes": on_yes}
         self.items.append(it)
         return it
 
@@ -289,8 +309,8 @@ class Pet:
             sign["on_click"]()
             return
         it = self.current()
-        if it and it.get("buttons"):                    # 有邀请时点她 = 答应
-            self.answer(it, it["buttons"][0][1])
+        if it and it.get("on_yes"):                     # 有邀请时点她 = 答应
+            self.answer(it, it["on_yes"])
             return
         if it and it.get("msg"):
             self.items.remove(it)
@@ -321,7 +341,13 @@ class Pet:
         self.behavior.start_action("eat", 3.5)
 
     def show_status(self):
-        show_card(self)
+        """打开状态卡片；已经开着就收起（长按两次 = 开、关）。"""
+        old = getattr(self, "status_card", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+            self.status_card = None
+            return
+        self.status_card = show_card(self)
 
     def level_up(self, lv, title):
         self.log("好感升级：Lv.%d %s" % (lv, title))
@@ -433,7 +459,7 @@ class Pet:
         act = None
         if busy:
             self.behavior.interrupt()
-            if not (cur is not None and cur.get("buttons")):   # 等你回邀请时不算打断
+            if not (cur is not None and cur.get("on_yes")):   # 等你回邀请时不算打断
                 self.play.interrupt()
             self.play.note_busy(now)
         else:
@@ -533,19 +559,18 @@ class Pet:
             return
         text = it["text"]
         urgent = it["kind"] == "sign"
-        buttons = it.get("buttons") or []
-        closable = not urgent and not buttons
+        closable = not urgent and not it.get("on_yes")
         f = tkfont.Font(font=(FONT, 9, "bold") if urgent else (FONT, 9))
         lines = text.split(chr(10)) or [""]
         tw = max(f.measure(ln) for ln in lines)
         th = f.metrics("linespace") * len(lines)
-        bw = int(min(max(tw + 44 + (110 if buttons else 16 if closable else 0), 120), 430))
+        bw = int(min(max(tw + 44 + (16 if closable else 0), 120), 430))
         bh = int(th + 26)
         # 尾巴长度跟着这一侧算：朝上的尾巴会伸进「她头顶以上」那段空间，得让出来，
         # 不然算「上面放得下吗」会算错，气泡贴到她的脚边
         self.bubble_gap = max(TAIL, int(self.head_y - bh - GAP))
         self.bubble_item, self.bubble_dim = it, (bw, bh)
-        self.bubble_urgent, self.bubble_buttons, self.bubble_closable = urgent, buttons, closable
+        self.bubble_urgent, self.bubble_closable = urgent, closable
 
         b = tk.Toplevel(self.root)
         b.overrideredirect(True)
@@ -610,16 +635,7 @@ class Pet:
                        justify="left", anchor="w", cursor="hand2")
         c.create_window(20, bh / 2, window=lbl, anchor="w")
         widgets = [lbl]
-        if self.bubble_buttons:
-            n = len(self.bubble_buttons)
-            for k, (label, cb) in enumerate(self.bubble_buttons):
-                bt = tk.Button(c, text=label, bg="#ffffff", fg=CLOUD, relief="flat", bd=0,
-                               activebackground="#e6f1ff", activeforeground=CLOUD,
-                               padx=8, pady=1, font=(FONT, 9), cursor="hand2",
-                               command=lambda it=it, cb=cb: self.answer(it, cb))
-                c.create_window(bw - 18, bh / 2 + (k - (n - 1) / 2.0) * 26, window=bt, anchor="e")
-                widgets.append(bt)
-        elif self.bubble_closable:
+        if self.bubble_closable:
             x = tk.Label(c, text="×", bg=CLOUD, fg=CLOUD_HINT, font=(FONT, 11), cursor="hand2")
             c.create_window(bw - 14, 16, window=x, anchor="e")
             x.bind("<Button-1>", lambda e, it=it: self.dismiss(it))
@@ -645,6 +661,9 @@ class Pet:
             if it["sign"]["on_click"]:
                 it["sign"]["on_click"]()
             return
+        if it.get("on_yes"):                            # 邀请：点气泡 = 答应
+            self.answer(it, it["on_yes"])
+            return
         if it in self.items:
             self.items.remove(it)
             if it.get("msg"):
@@ -653,17 +672,6 @@ class Pet:
     def dismiss(self, it):
         if it in self.items:
             self.items.remove(it)
-
-    def place_bubble(self, height=None):
-        if self.bubble is None:
-            return
-        self.bubble.update_idletasks()
-        bw = self.bubble.winfo_reqwidth()
-        bh = height or self.bubble.winfo_reqheight()
-        x, y = self.root.winfo_x(), self.root.winfo_y()
-        bx = x - bw + 10 if x - bw + 10 > 0 else x + self.cw - 10
-        by = max(min(y + self.ch - bh + 10, self.sh - bh - 10), 0)
-        self.bubble.geometry("+%d+%d" % (bx, by))
 
 
 def main(ext_dirs=()):

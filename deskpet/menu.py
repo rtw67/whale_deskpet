@@ -117,6 +117,8 @@ class BubbleMenu:
         self.stack = []            # 每一层 {"items", "page", "sub"}，最后一个是当前这层
         self.targets = []          # 当前这层每个泡泡的最终位置 [(x, y, item)]
         self.animating = False
+        self.phase = None          # 正在播的动画：pop（冒出来）/ fold（缩回去）
+        self.anim = 0              # 动画编号：开新动画后，旧动画剩下的帧自己停掉
         self.timer = None
         self.watching = False
         self.was_down = True
@@ -144,6 +146,9 @@ class BubbleMenu:
                                       cx - self.size // 2, cy - self.size // 2))
         c = tk.Canvas(win, width=self.size, height=self.size, bg=self.key, highlightthickness=0)
         c.pack()
+        # 点击统一在画布上按泡泡的最终位置判断：冒出来的动画还没播完时，
+        # 泡泡还在半路上，按图形判断会点空（以前这一下会被当成「点到别处」直接收起）
+        c.bind("<Button-1>", self._canvas_click)
         self.win, self.canvas = win, c
         self.stack = [{"items": [_norm(i) for i in items], "page": 0, "sub": False}]
         self._pop(self._visible())
@@ -162,6 +167,8 @@ class BubbleMenu:
             self.win.destroy()
             self.win = self.canvas = None
         self.stack, self.targets = [], []
+        self.animating, self.phase = False, None
+        self.anim += 1
 
     # ------------------------------------------------------------------ 层级
     def _enter(self, item):
@@ -245,11 +252,13 @@ class BubbleMenu:
         if c is None:
             return
         self.targets = self._layout(items)
-        self.animating = True
+        self.animating, self.phase = True, "pop"
+        self.anim += 1
+        me = self.anim
         n = len(self.targets)
 
         def frame(k):
-            if self.canvas is not c:
+            if self.canvas is not c or self.anim != me:
                 return
             c.delete("all")
             for i, (tx, ty, it) in enumerate(self.targets):
@@ -262,7 +271,7 @@ class BubbleMenu:
             if k < POP_FRAMES + n * 0.6:
                 c.after(16, frame, k + 1)
             else:
-                self.animating = False
+                self.animating, self.phase = False, None
 
         frame(1)
 
@@ -272,10 +281,12 @@ class BubbleMenu:
         if c is None:
             return
         old = self.targets
-        self.animating = True
+        self.animating, self.phase = True, "fold"
+        self.anim += 1
+        me = self.anim
 
         def frame(k):
-            if self.canvas is not c:
+            if self.canvas is not c or self.anim != me:
                 return
             c.delete("all")
             e = 1 - k / FOLD_FRAMES
@@ -295,7 +306,10 @@ class BubbleMenu:
         label = it["label"]
         icon = self._icon(it)
         if icon:
-            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身
+            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身。
+            # 底下垫一个实心圆：窗口的透明色会让点击穿透，图里透明的像素点下去会漏到别的窗口
+            r = D / 2 - 3
+            c.create_oval(x - r, y - r, x + r, y + r, fill=BUBBLE, outline="", tags=tag)
             c.create_image(x, y, image=icon[0], tags=tag)
         else:
             fill = DISABLED if it.get("cb") is None else DANGER if _dark(it) else BUBBLE
@@ -315,20 +329,19 @@ class BubbleMenu:
                               justify="center", tags=tag)
         if final and it.get("cb") is not None:
             self._hover(c, tag, it, x, y)
-            # 点击：图标泡泡和画出来的泡泡都要绑（之前只绑过画的那一支，换图标后全点不动）
-            c.tag_bind(tag, "<Button-1>", lambda e, it=it: self._click(it))
 
     def _hover(self, c, tag, it, x, y):
         """悬停：变大变亮，外侧（背对她的方向）出一个深色标签写完整说明。"""
         icon = self._icon(it)
         o = self.size / 2
         items = c.find_withtag(tag)
+        img = items[-1]                              # 图标泡泡：最后一个是图（前面是垫底的圆）
 
         def enter(e):
             if self.animating:
                 return
             if icon:
-                c.itemconfigure(items[0], image=icon[1])
+                c.itemconfigure(img, image=icon[1])
             else:
                 c.itemconfigure(items[0], fill=DANGER_HOVER if _dark(it) else BUBBLE_HOVER)
                 c.scale(tag, x, y, 1.12, 1.12)
@@ -355,7 +368,7 @@ class BubbleMenu:
 
         def leave(e):
             if icon:
-                c.itemconfigure(items[0], image=icon[0])
+                c.itemconfigure(img, image=icon[0])
             elif c.coords(items[0]):
                 c.itemconfigure(items[0], fill=DANGER if _dark(it) else BUBBLE)
                 c.scale(tag, x, y, 1 / 1.12, 1 / 1.12)
@@ -368,8 +381,20 @@ class BubbleMenu:
     def _icon(self, it):
         return self.icons.get(it.get("icon") or ICON_KEYS.get(it["label"], ""))
 
+    def _target_at(self, lx, ly):
+        """画布坐标 (lx, ly) 落在哪个泡泡的最终位置上（比泡泡大一圈，好点）。"""
+        for tx, ty, it in self.targets:
+            if math.hypot(lx - tx, ly - ty) <= D / 2 + 6:
+                return it
+        return None
+
+    def _canvas_click(self, e):
+        it = self._target_at(e.x, e.y)
+        if it is not None and it.get("cb") is not None:
+            self._click(it)
+
     def _click(self, it):
-        if self.animating:
+        if self.phase == "fold":                  # 正在换一圈：这一下不算
             return
         if it.get("sub"):
             self._enter(it)
@@ -399,7 +424,7 @@ class BubbleMenu:
         if down and not self.was_down:                 # 刚按下去的那一刻
             x, y = self.root.winfo_pointerxy()
             if not (self._on_bubble(x, y) or self._inside(self.owner, x, y)):
-                self.close("点到别处 (%d,%d)" % (x, y))
+                self.close("点到别处 (%d,%d) %s" % (x, y, self._where(x, y)))
                 self.watching = False
                 return
         self.was_down = down
@@ -418,4 +443,13 @@ class BubbleMenu:
         if self.win is None or not self._inside(self.win, x, y):
             return False
         lx, ly = x - self.win.winfo_rootx(), y - self.win.winfo_rooty()
-        return bool(self.canvas.find_overlapping(lx, ly, lx, ly))
+        return bool(self.canvas.find_overlapping(lx, ly, lx, ly)) or self._target_at(lx, ly) is not None
+
+    def _where(self, x, y):
+        """日志用：点的位置在菜单里的哪、离最近的泡泡多远（排查「点了泡泡却收起」）。"""
+        try:
+            lx, ly = x - self.win.winfo_rootx(), y - self.win.winfo_rooty()
+            d = min((math.hypot(lx - tx, ly - ty) for tx, ty, _ in self.targets), default=-1)
+            return "画布内 (%d,%d)，离最近的泡泡 %d，%s" % (lx, ly, d, self.phase or "静止")
+        except tk.TclError:
+            return ""
