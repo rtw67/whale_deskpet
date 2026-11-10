@@ -93,6 +93,48 @@ def _bar(parent, name, frac, text, color):
     tk.Label(row, text=text, bg=BG, fg=DETAIL_FG, font=(FONT, 8)).pack(side="left")
 
 
+def place_near(pet, win):
+    """把一个窗口摆在她旁边：她在右半边就放左边，底边和她的脚齐平。"""
+    win.update_idletasks()
+    cw, ch = win.winfo_reqwidth(), win.winfo_reqheight()
+    x, y = pet.root.winfo_x(), pet.root.winfo_y()
+    cx = x - cw - 8 if x > pet.sw // 2 else x + pet.cw + 8
+    cy = max(min(y + pet.ch - ch, pet.sh - ch - 50), 4)
+    win.geometry("+%d+%d" % (max(cx, 4), cy))
+
+
+def panel(pet, title, on_close):
+    """无边框的小面板（聊天、跑代码用）：标题栏能拖，右上角 ×。返回 (窗口, 内容区, 标题栏)。
+
+    标题栏右边还能再 pack(side="right") 别的小按钮。
+    """
+    top = tk.Toplevel(pet.root)
+    top.overrideredirect(True)
+    top.attributes("-topmost", True)
+    top.configure(bg=BORDER)
+    body = tk.Frame(top, bg=BG)
+    body.pack(padx=2, pady=2, fill="both", expand=True)
+    head = tk.Frame(body, bg=BG)
+    head.pack(fill="x", padx=10, pady=(8, 4))
+    lbl = tk.Label(head, text=title, bg=BG, fg=TITLE_FG, font=(FONT, 10, "bold"), cursor="fleur")
+    lbl.pack(side="left")
+    x = tk.Label(head, text="×", bg=BG, fg=DETAIL_FG, font=(FONT, 12), cursor="hand2")
+    x.pack(side="right")
+    x.bind("<Button-1>", lambda e: on_close())
+    drag = {}
+    lbl.bind("<Button-1>", lambda e: drag.update(x=e.x_root - top.winfo_x(), y=e.y_root - top.winfo_y()))
+    lbl.bind("<B1-Motion>", lambda e: top.geometry("+%d+%d" % (e.x_root - drag["x"], e.y_root - drag["y"])))
+    return top, body, head
+
+
+def link(parent, text, cb):
+    """标题栏上的小字按钮。"""
+    b = tk.Label(parent, text=text, bg=BG, fg=DETAIL_FG, font=(FONT, 8), cursor="hand2")
+    b.pack(side="right", padx=8)
+    b.bind("<Button-1>", lambda e: cb())
+    return b
+
+
 def show_detail(pet, msg):
     """点开一条提醒、又没有扩展接管时：一张卡片显示标题和正文，有 url 就给个打开按钮。"""
     import webbrowser

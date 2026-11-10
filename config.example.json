@@ -19,5 +19,6 @@
     "invite_seconds": 25,
     "chase_seconds": 45
   },
-  "water": {"enabled": false, "every_minutes": 60}
+  "water": {"enabled": false, "every_minutes": 60},
+  "chat": {"enabled": false, "backend": "claude", "model": "sonnet"}
 }
