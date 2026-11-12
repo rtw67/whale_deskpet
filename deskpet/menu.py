@@ -80,6 +80,25 @@ def load_icons(skin_dir):
     return out
 
 
+def _off_center(img):
+    """图里那个圆的圆心离图片正中差多少 (dx, dy)。
+
+    皮肤里的图标是从一张大图上切下来的，圆不一定在正中（差个五六像素很常见），
+    直接按图片中心摆，弧线上的间距就忽大忽小、看着像挤在一起。
+    圆心的横坐标 = 中间那一行不透明部分的中点，纵坐标同理看中间那一列（圆偏得不多，中线一定穿过它）。
+    """
+    w, h = img.width(), img.height()
+
+    def mid(points):
+        hit = [i for i, (x, y) in enumerate(points) if not img.transparency_get(x, y)]
+        return (hit[0] + hit[-1]) / 2.0 if hit else None
+
+    cx = mid([(x, h // 2) for x in range(w)])
+    cy = mid([(w // 2, y) for y in range(h)])
+    return (cx - (w - 1) / 2.0 if cx is not None else 0.0,
+            cy - (h - 1) / 2.0 if cy is not None else 0.0)
+
+
 def _mouse_down():
     """左键或右键现在是不是按着（全局，不管点在哪个程序上）。"""
     try:
@@ -110,6 +129,7 @@ class BubbleMenu:
         """
         self.log = log or (lambda msg: None)
         self.icons = icons or {}
+        self.offsets = {}          # 图片 -> 圆心偏了多少，量一次记住（见 _off_center）
         self.root = root
         self.key = key
         self.owner = owner or root
@@ -308,8 +328,9 @@ class BubbleMenu:
         label = it["label"]
         icon = self._icon(it)
         if icon:
-            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身
-            c.create_image(x, y, image=icon[0], tags=tag)
+            # 图标泡泡：Tk 缩放不了图片，飞的路上就是图本身。按圆心摆，不按图片中心
+            dx, dy = self._offset(icon[0])
+            c.create_image(x - dx, y - dy, image=icon[0], tags=tag)
         else:
             fill = DISABLED if it.get("cb") is None else DANGER if _dark(it) else BUBBLE
             r = d / 2
@@ -340,7 +361,9 @@ class BubbleMenu:
             if self.animating:
                 return
             if icon:
+                dx, dy = self._offset(icon[1])           # 悬停的大图，圆心偏得又不一样
                 c.itemconfigure(img, image=icon[1])
+                c.coords(img, x - dx, y - dy)
             else:
                 c.itemconfigure(items[0], fill=DANGER_HOVER if _dark(it) else BUBBLE_HOVER)
                 c.scale(tag, x, y, 1.12, 1.12)
@@ -367,7 +390,9 @@ class BubbleMenu:
 
         def leave(e):
             if icon:
+                dx, dy = self._offset(icon[0])
                 c.itemconfigure(img, image=icon[0])
+                c.coords(img, x - dx, y - dy)
             elif c.coords(items[0]):
                 c.itemconfigure(items[0], fill=DANGER if _dark(it) else BUBBLE)
                 c.scale(tag, x, y, 1 / 1.12, 1 / 1.12)
@@ -379,6 +404,15 @@ class BubbleMenu:
 
     def _icon(self, it):
         return self.icons.get(it.get("icon") or ICON_KEYS.get(it["label"], ""))
+
+    def _offset(self, img):
+        key = str(img)
+        if key not in self.offsets:
+            try:
+                self.offsets[key] = _off_center(img)
+            except tk.TclError:
+                self.offsets[key] = (0.0, 0.0)
+        return self.offsets[key]
 
     def _target_at(self, lx, ly):
         """画布坐标 (lx, ly) 落在哪个泡泡的最终位置上（比泡泡大一圈，好点）。"""
