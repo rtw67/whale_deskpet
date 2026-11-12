@@ -197,61 +197,6 @@ def bubble_size(text, buttons=False, closable=False, font_px=17):
 
 
 def cloud(canvas, x0, y0, x1, y1, tail=None, fill=CLOUD, outline=CLOUD_EDGE, width=2):
-    """在画布上画一朵云：用一圈鼓包拼出轮廓（先画大一圈的描边色，再画本体）。
-
-    tail: (底边中点 x, 底边中点 y, 尾巴尖 x, 尾巴尖 y, 半宽) —— 从云朵边上伸出一个三角形。
-          底边中点要落在云朵边缘上，三角形才接得住；None 就不画尾巴。
-    """
-    w, h = x1 - x0, y1 - y0
-    r = max(min(h * 0.46, 30), 14)
-    # 鼓包大小错落一点，才像云不像波浪边的方块
-    def rad(k):
-        return r * (0.86 + 0.28 * ((k * 37) % 7) / 6.0)
-
-    bumps = []
-    n = max(3, int(w / (r * 1.45)))
-    span = w - 2 * r
-    for i in range(n + 1):                       # 上沿的鼓包
-        cx = x0 + r + span * (i / float(n))
-        bumps.append((cx, y0 + r * 0.42, rad(i)))
-    for i in range(n):                           # 下沿的鼓包，错开半个间距
-        cx = x0 + r + span * ((i + 0.5) / n)
-        bumps.append((cx, y0 + h - r * 0.42, rad(i + 3)))
-    # 两头各一个大圆，把左右封住
-    bumps += [(x0 + r * 0.7, y0 + h / 2, h / 2 - 1), (x1 - r * 0.7, y0 + h / 2, h / 2 - 1)]
-
-    for grow, color in ((width, outline), (0, fill)):
-        for cx, cy, rr in bumps:
-            canvas.create_oval(cx - rr - grow, cy - rr - grow,
-                               cx + rr + grow, cy + rr + grow, fill=color, outline="")
-        if tail:
-            bx, by, tx, ty, hw = tail
-            dx, dy = tx - bx, ty - by
-            d = (dx * dx + dy * dy) ** 0.5 or 1
-            px, py = -dy / d, dx / d              # 底边的垂直方向
-            canvas.create_polygon(bx + px * (hw + grow), by + py * (hw + grow),
-                                  bx - px * (hw + grow), by - py * (hw + grow),
-                                  tx, ty, fill=color, outline="")
-
-
-def bubble_size(text, buttons=False, closable=False, font_px=17):
-    """按文字长短估一个云朵大小（多行文字按最宽的一行算）。
-
-    font_px 是实际字高（雅黑 9 号约 17 像素）：中文按一个字一个 font_px、
-    英文数字按 0.55 估，再加左右留白。
-    """
-    lines = text.split("\n") if text else [""]
-    wide = max(sum(font_px if ord(c) > 0x2E80 else font_px * 0.55 for c in ln) for ln in lines)
-    w = max(wide + 52, 130)
-    h = 34 + (font_px + 6) * len(lines)
-    if buttons:
-        w += 110
-    elif closable:
-        w += 16
-    return int(min(w, 400)), int(h)
-
-
-def cloud(canvas, x0, y0, x1, y1, tail=None, fill=CLOUD, outline=CLOUD_EDGE, width=2):
     """在画布上画一朵云：用一圈鼓包当遮罩，拼出一整朵（描边在下面一层，先画大的深色再画小的）。
 
     tail: 尾巴尖的位置 (x, y)；None 就不画尾巴。

@@ -11,6 +11,7 @@
   "wander_gap": [40, 120],
   "action_gap": [8, 20],
   "oops_words": ["失败", "出错", "错误", "过期"],
+  "fullscreen_quiet": true,
   "play": {
     "enabled": true,
     "idle_minutes": 30,

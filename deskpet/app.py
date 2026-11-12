@@ -8,16 +8,18 @@
 
 状态优先级（从高到低）：举牌 > 要你点的气泡 > 临时气泡 > 闲着（发呆、小动作、溜达）。
 左键拖动；单击 = 处理当前这条（没事时 = 摸摸她）；右键 = 泡泡菜单。
+免打扰（手动开、或者有程序全屏）时不说话不乱动，提醒攒到结束再冒（见 quiet.py）。
 """
 
 import os
 import random
+import shutil
 import time
 from datetime import datetime
 
 import tkinter as tk
 
-from deskpet import config, lines
+from deskpet import autostart, config, lines
 from deskpet import sprite
 from deskpet.behavior import Behavior
 from deskpet.card import CLOUD, CLOUD_HINT, CLOUD_TEXT, cloud, show_card, show_detail
@@ -25,9 +27,10 @@ from deskpet.extensions import Extensions, load_all
 from deskpet.link import Server
 from deskpet.menu import BubbleMenu, load_icons
 from deskpet.play import PlayManager, user_idle_seconds
+from deskpet.quiet import fullscreen_at
 from deskpet.stats import Stats
 from deskpet.theme import FONT
-from deskpet.util import ROOT, data_path, load_json, log, save_json
+from deskpet.util import DATA_DIR, ROOT, data_path, load_json, log, save_json
 
 try:
     import winsound
@@ -112,7 +115,12 @@ class Pet:
         self.stats.on_level_up = self.level_up
         self.greeted = False
         self.next_chatter = time.time() + random.uniform(10, 20) * 60
+        self.dnd_until = 0.0       # 手动免打扰到什么时候
+        self.full = False          # 现在有程序全屏（她藏起来了）
+        self.held = []             # 免打扰期间攒下的提醒
+        self.was_quiet = False
 
+        self.ext_dirs = list(ext_dirs)            # 开机自启要照原样带上
         dirs = list(self.cfg.get("extension_dirs") or []) + list(ext_dirs)
         self.ext = Extensions(load_all([os.path.join(ROOT, d) if not os.path.isabs(d) else d
                                         for d in dirs], log), log)
@@ -207,7 +215,8 @@ class Pet:
                 log("处理消息出错: %s" % exc)
         self.root.after(200, self.poll_messages)
 
-    def handle(self, p, quiet=False):
+    def handle(self, p, quiet=False, replay=False):
+        """处理一条消息。replay=True 是免打扰结束后把攒下的再走一遍（已经记过「最近」了）。"""
         now = time.time()
         if p.get("_cmd") == "event":                     # 别的程序通知她发生了什么
             name = p.get("name") or ""
@@ -228,9 +237,13 @@ class Pet:
             return
         title = p.get("title") or ""
         msg = (p.get("message") or "").strip()
-        self.recent.insert(0, {"at": now, "title": title or msg[:20], "msg": p})
-        del self.recent[15:]
-        log("收到: %s" % title)
+        if not replay:
+            self.recent.insert(0, {"at": now, "title": title or msg[:20], "msg": p})
+            del self.recent[15:]
+            log("收到: %s" % title)
+            if self.quiet():
+                self.held.append(p)
+                return
         if self.ext.first("on_message", self, p):       # 扩展接管了（比如变成举牌）
             return
         if p.get("sound") and not quiet:
@@ -393,7 +406,15 @@ class Pet:
         ]
         for more in self.ext.call("menu_items", self):
             items += list(more or [])
+        if time.time() < self.dnd_until:
+            until = time.strftime("%H:%M", time.localtime(self.dnd_until))
+            items.append({"label": "免打扰", "icon": "dnd", "tip": "免打扰到 %s，点一下取消" % until,
+                          "cb": self.end_dnd})
+        else:
+            items.append({"label": "免打扰", "icon": "dnd", "tip": "一段时间内别打扰我",
+                          "cb": self.dnd_entries, "sub": True})
         items += [
+            {"label": "设置", "icon": "gear", "cb": self.settings_entries, "sub": True},
             {"label": "归位", "cb": self.reset_pos},
             {"label": "退出", "cb": self.quit},
         ]
@@ -431,6 +452,99 @@ class Pet:
         self.save_pos(home=True)
         self.place_bubble()
 
+    # ------------------------------------------------------------------ 免打扰
+    def quiet(self):
+        """现在是不是免打扰（手动开的，或者有程序全屏）。扩展要冒不重要的气泡前可以先问一下。"""
+        return self.full or time.time() < self.dnd_until
+
+    def dnd_entries(self):
+        """「免打扰」子菜单：多久。下班前才有「到下班」。"""
+        out = [{"label": "半小时", "cb": lambda: self.start_dnd(30 * 60)},
+               {"label": "1小时", "cb": lambda: self.start_dnd(3600)},
+               {"label": "2小时", "cb": lambda: self.start_dnd(7200)}]
+        end = self.cfg.get("work_end", "20:00")
+        now = datetime.now()
+        try:
+            h, m = (int(v) for v in end.split(":"))
+            left = (now.replace(hour=h, minute=m, second=0) - now).total_seconds()
+        except ValueError:
+            left = 0
+        if not self.off_duty() and left > 60:
+            out.append({"label": "到下班", "tip": "到 %s" % end, "cb": lambda: self.start_dnd(left)})
+        return out
+
+    def start_dnd(self, seconds):
+        self.dnd_until = time.time() + seconds
+        log("免打扰到 %s" % time.strftime("%H:%M", time.localtime(self.dnd_until)))
+
+    def end_dnd(self):
+        self.dnd_until = 0.0
+        log("取消免打扰")
+
+    def _quiet_changed(self, quiet):
+        """免打扰开始 / 结束。结束时把攒下的提醒一条条放出来。"""
+        self.was_quiet = quiet
+        if quiet:
+            self.menu.close()
+            return
+        held, self.held = self.held, []
+        for p in held:
+            self.handle(p, quiet=True, replay=True)
+        if len(held) > 1:
+            self.say("刚才来了 %d 条提醒，右键「消息」能翻～" % len(held), 8)
+
+    def _hide(self, hide):
+        """有程序全屏：整个人藏起来（连气泡）；退出全屏再出来。"""
+        self.full = hide
+        if hide:
+            self.root.withdraw()
+            if self.bubble is not None:
+                self.bubble.withdraw()
+        else:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            if self.bubble is not None:
+                self.bubble.deiconify()
+        log("有程序全屏，先藏起来" if hide else "全屏结束，出来了")
+
+    def draw_moon(self):
+        """手动免打扰时，头边上挂一个小月亮：两个圆错开，后一个用透明色挖掉。"""
+        c, x, y = self.canvas, self.cw - 14, self.head_top + 10
+        c.create_oval(x - 7, y - 7, x + 7, y + 7, fill="#ffd166", outline="", tags="overlay")
+        c.create_oval(x - 3, y - 10, x + 10, y + 4, fill=KEY, outline="", tags="overlay")
+
+    # ------------------------------------------------------------------ 设置
+    def settings_entries(self):
+        on = autostart.enabled()
+        return [
+            {"label": "开机自启", "icon": "power",
+             "tip": "开机自启：%s，点一下%s" % (("开着", "关掉") if on else ("关着", "打开")),
+             "cb": self.toggle_autostart},
+            {"label": "改配置", "icon": "gear", "tip": "打开 config.json", "cb": self.open_config},
+            {"label": "数据", "icon": "folder", "tip": "打开数据目录（好感、日志……）",
+             "cb": lambda: os.startfile(DATA_DIR)},
+        ]
+
+    def toggle_autostart(self):
+        try:
+            if autostart.enabled():
+                autostart.disable()
+                self.say("好，开机就不自己跑出来了", 4, fun=True)
+            else:
+                autostart.enable(self.ext_dirs)
+                self.say("好～以后开机我就自己出来！", 4, fun=True)
+            log("开机自启：%s" % ("开" if autostart.enabled() else "关"))
+        except OSError as e:
+            log("开机自启设置失败：%s" % e)
+            self.say("没设置成功…（%s）" % e, 6)
+
+    def open_config(self):
+        """打开 config.json；还没有就先照着 config.example.json 复制一份。"""
+        path = config.CONFIG_PATH
+        if not os.path.exists(path):
+            shutil.copyfile(os.path.join(ROOT, "config.example.json"), path)
+        os.startfile(path)
+
     def quit(self):
         log("桌宠退出")
         self.root.destroy()
@@ -446,6 +560,25 @@ class Pet:
             self.items.remove(it)
             if it.get("on_expire"):
                 it["on_expire"]()
+        # 每秒看一次她这块屏幕上有没有程序全屏（藏起来时按藏之前的位置看）
+        if self.t % 8 == 0:
+            if self.cfg.get("fullscreen_quiet", True):
+                if not self.full:
+                    self.full_at = (self.root.winfo_x() + self.cw // 2, self.root.winfo_y() + self.ch // 2)
+                full = fullscreen_at(*self.full_at)
+            else:
+                full = False
+            if full != self.full:
+                self._hide(full)
+        quiet = self.quiet()
+        if quiet != self.was_quiet:
+            self._quiet_changed(quiet)
+        if self.full:
+            self.behavior.interrupt()
+            self.play.interrupt()
+            self.stats.tick(now, resting=True, working_hours=not self.off_duty())
+            self.root.after(120, self.tick)
+            return
         cur = self.current()
         sign = self.top_sign()
 
@@ -454,7 +587,7 @@ class Pet:
         # 「有事」：举牌、提醒、菜单、拖她、休息时间…… 闲聊、玩的时候自己说的话（fun）不算
         busy = (sign is not None or self.happy_until > now
                 or (cur is not None and not cur.get("fun"))
-                or self.menu.is_open or self.drag is not None
+                or self.menu.is_open or self.drag is not None or quiet
                 or (self.off_duty() and not self.play.active))   # 休息时间睡觉；但你叫她玩就陪你玩
         act = None
         if busy:
@@ -498,6 +631,8 @@ class Pet:
         # 图里没画牌子（占位团子、或者皮肤缺这个动作）就在头顶补画一块
         self.topmost(sign is not None and self.sign_room > 0)
         self.canvas.delete("overlay")
+        if now < self.dnd_until:
+            self.draw_moon()
         if sign is not None and act is None and (not self.skin or drawn != sign["expr"]):
             if sign["expr"] == "qr":
                 self.draw_qr()
@@ -506,7 +641,7 @@ class Pet:
 
         # 菜单开着时把说话气泡收起来，别叠在一起；菜单收了再按原样显示
         key = (cur.get("sign") and id(cur["sign"]) or id(cur), cur["text"]) \
-            if cur and not self.menu.is_open else None
+            if cur and not self.menu.is_open and not quiet else None
         if key != self.bubble_key:
             self.bubble_key = key
             self.show_bubble(cur if key else None)

@@ -32,10 +32,20 @@
         收到 {"_cmd": "event"} 加完好感之后调，可以让她说句话。
 
     def menu_items(pet): ...
-        返回要加到右键第一层的泡泡（写法见 deskpet/menu.py），放在「归位」前面。
+        返回要加到右键第一层的泡泡（写法见 deskpet/menu.py），放在「免打扰」前面。
+
+    def chat_context(pet): ...
+        和她聊天时，附在「你现在的状态」里的几行（字符串，每行「- 」开头），没有就返回 None。
+        比如天气扩展返回「- 天气：上海，现在 14° 晴」，她聊天时就知道外面什么天。
+
+    def chat_actions(pet): ...
+        聊天时她能帮你做的事，返回 [{"tag": "提醒", "desc": "什么时候用、怎么写", "run": 函数}]。
+        她在回复里写 [[提醒: 明天 9点 交周报]]，聊天扩展把这一行拿掉，在主线程里调
+        run("明天 9点 交周报")；run 返回一句话（比如「记下了：明天 09:00 交周报」）会显示在聊天窗口里。
 
 pet 上能用的：pet.say(文字, 秒数, fun=True) / pet.cheer(秒数) / pet.stats / pet.lines /
-pet.cfg（config.json） / pet.log(文字)。任何一个扩展出错只记日志，不会把她搞挂。
+pet.cfg（config.json） / pet.log(文字) / pet.quiet()（免打扰中：不重要的话先别说）。
+任何一个扩展出错只记日志，不会把她搞挂。
 """
 
 import importlib.util
@@ -43,7 +53,7 @@ import os
 import sys
 import traceback
 
-HOOKS = ("setup", "poll", "on_message", "on_open", "on_event", "menu_items")
+HOOKS = ("setup", "poll", "on_message", "on_open", "on_event", "menu_items", "chat_context", "chat_actions")
 
 
 def _load_file(path):

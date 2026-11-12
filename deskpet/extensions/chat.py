@@ -30,7 +30,14 @@
     max_tokens   4096
    anthropic 格式没写 base_url / key / headers 时，跟 Claude Code 一样读环境变量
    ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_CUSTOM_HEADERS（每行一个「名字: 值」）。
-   对话记录存在内存里，每次连同前面的话一起发过去（最多带最近 40 条）。
+   对话记录每次连同前面的话一起发过去（最多带最近 40 条）。
+
+记忆：一个话题结束（太久没说话、点「新话题」）后，后台让模型把这段聊天里值得长期记住的事
+（你的称呼、在忙什么、喜欢什么、约好的事……）合并进 data/chat_memory.md，以后每次聊天都带上。
+这个文件可以直接改、删；窗口上的「记忆」打开它。当前话题和聊天记录存在 data/chat_state.json，
+重启后接着聊。
+
+表情：让模型在回复最后带一个 [开心] [惊讶] 这样的标签，程序拿掉标签，换成她的动作。
 
 通用配置：
     enabled          false
@@ -42,11 +49,14 @@
                                 都没写就用皮肤目录里的 persona.md，再没有就用下面的 PERSONA
     timeout          120        一句话最多等几秒
     session_minutes  30         多久没说话就开新话题（点「新话题」也行）
+    memory           true       记不记长期记忆（整理一次要多调一次模型）
+    emotes           true       回复时做表情动作
 """
 
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -61,7 +71,7 @@ import tkinter as tk
 
 from deskpet import sprite
 from deskpet.card import link, panel, place_near
-from deskpet.util import ROOT
+from deskpet.util import ROOT, data_path, load_json, save_json
 from deskpet.theme import BG, BTN2_BG, BTN_BG, BTN_FG, DETAIL_FG, FONT, MSG_FG
 
 NAME = "chat"
@@ -72,11 +82,41 @@ PERSONA = ("你是住在用户电脑桌面上的桌宠「{name}」，一个蓝�
            "说话口语化、温柔可爱，可以偶尔用「～」。回答简短，一般三四句话以内；"
            "用户要详细解释或代码时再展开。不要用 Markdown 标题和表格。")
 
+MEMORY_PROMPT = """你在帮桌宠「{name}」整理她对用户的长期记忆。下面会给你她已有的记忆和最近几段聊天。
+
+把聊天里值得长期记住的事合并进记忆：用户希望怎么被称呼、职业和最近在忙的事、喜欢和讨厌的东西、
+近期的计划和烦恼、你们之间的约定和小梗。不要记一次性的问题细节（比如某段代码怎么写）和客套话。
+新内容和已有记忆冲突时以新的为准，明显过时的删掉。和时间有关的写上日期（几月几日）。
+
+每条一行，以「- 」开头，总共不超过 20 条。只输出记忆列表本身，不要任何别的话。
+一条值得记的都没有时，输出「（无）」。"""
+
+# 回复末尾的表情标签 -> (表情, 摆几秒)。None = 不做动作
+EMOTES = {"开心": ("happy", 2.5), "兴奋": ("dance", 3.0), "挥手": ("wave", 2.4),
+          "惊讶": ("oops", 2.0), "难过": ("sit", 4.0), "困": ("yawn", 2.2),
+          "思考": ("look", 3.0), "平常": None}
+EMOTE_NOTE = ("## 表情\n"
+              "每次回复的最后另起一行，写一个方括号标签表示你说这话时的表情，从这几个里选："
+              + " ".join("[%s]" % k for k in EMOTES) +
+              "。只写一个。标签会被程序拿掉、换成你在桌面上的动作，用户看不到它。")
+ACTION_RE = re.compile(r"\[\[\s*([^\]:：\s]+?)\s*[:：]\s*(.+?)\s*\]\]")
+EMOTE_RE = re.compile(r"\s*[\[【［]\s*([^\]】］\s]{1,4})\s*[\]】］]\s*$")
+
 ME_FG = "#8ec5ff"
 MAX_HISTORY = 40
+MAX_LOG = 200              # 窗口里留多少条（存盘的也是这么多）
+MAX_PENDING = 5            # 最多攒几段没整理进记忆的话题
+MEMORY_MAX = 2000          # 记忆文件最多多少字
+STATE_FILE = "chat_state.json"
+MEMORY_FILE = "chat_memory.md"
+
 # conv：当前话题。claude 时是会话 id，api 时是发过的消息列表；None = 新话题
-_s = {"conv": None, "last": 0.0, "busy": False, "win": None, "log": [], "unread": False}
+# topic：当前话题里说过的话 [[谁, 话], ...]，话题结束时交给记忆整理
+_s = {"conv": None, "last": 0.0, "busy": False, "win": None, "log": [], "topic": [], "unread": False}
 _q = queue.Queue()
+_pending = []              # 结束了、还没整理进记忆的话题 [{"date", "lines"}]
+_plock = threading.Lock()  # 管 _pending（主线程和后台线程都会动）
+_wlock = threading.Lock()  # 后台调模型一次只跑一个：先整理记忆，再回话
 
 
 def _cfg(pet):
@@ -85,7 +125,16 @@ def _cfg(pet):
 
 def setup(pet):
     pet.stats.register_event("chat", 1, 2, 0, 10, "聊天")
+    _load()
     _drain(pet)
+
+
+def poll(pet, now):
+    # 太久没说话：这个话题算结束了，趁空闲整理进记忆
+    c = _cfg(pet)
+    if (c.get("enabled") and _s["topic"] and not _s["busy"]
+            and now - _s["last"] > float(c.get("session_minutes", 30)) * 60):
+        _end_topic(pet)
 
 
 def menu_items(pet):
@@ -101,23 +150,46 @@ def on_open(pet, msg):
     return True
 
 
-# ---------------------------------------------------------------------- 调 claude
-def _command(c):
-    """找 claude。npm 装的在 Windows 上是 claude.cmd：直接用 node 跑 cli.js，免得 cmd 把参数里的 [] "" 搞乱。"""
-    exe = c.get("claude") or shutil.which("claude")
-    if not exe:
-        return None
-    if exe.lower().endswith((".cmd", ".bat")):
-        d = os.path.dirname(exe)
-        js = os.path.join(d, "node_modules", "@anthropic-ai", "claude-code", "cli.js")
-        node = os.path.join(d, "node.exe") if os.path.exists(os.path.join(d, "node.exe")) else shutil.which("node")
-        if os.path.exists(js) and node:
-            return [node, js]
-    return [exe]
+# ---------------------------------------------------------------------- 存盘
+def _load():
+    d = load_json(data_path(STATE_FILE), {}) or {}
+    _s["conv"] = d.get("conv")
+    _s["last"] = float(d.get("last") or 0)
+    _s["log"] = [tuple(x) for x in d.get("log") or []]
+    _s["topic"] = d.get("topic") or []
+    with _plock:
+        _pending[:] = d.get("pending") or []
 
 
+def _save():
+    with _plock:
+        pending = list(_pending)
+    try:
+        save_json(data_path(STATE_FILE), {"conv": _s["conv"], "last": _s["last"],
+                                          "log": [list(x) for x in _s["log"][-MAX_LOG:]],
+                                          "topic": _s["topic"], "pending": pending})
+    except OSError:
+        pass
+
+
+def _read_memory():
+    try:
+        with open(data_path(MEMORY_FILE), encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _open_memory():
+    path = data_path(MEMORY_FILE)
+    if not os.path.exists(path):
+        open(path, "w", encoding="utf-8").close()
+    os.startfile(path)
+
+
+# ---------------------------------------------------------------------- 人设
 def _persona(pet):
-    """人设 + 她此刻的状态。在主线程里调（要读 pet.stats）。
+    """人设正文。在主线程里调。
 
     人设里的 {name} 换成她的名字（用 replace，人设正文里可以随便出现别的大括号）。
     """
@@ -132,12 +204,11 @@ def _persona(pet):
                 text = fh.read()
         except OSError:
             text = PERSONA
-    text = text.replace("{name}", pet.cfg.get("name", "鲸鱼娘"))
-    return text.rstrip() + "\n\n" + _state_note(pet)
+    return text.replace("{name}", pet.cfg.get("name", "鲸鱼娘")).rstrip()
 
 
 def _state_note(pet):
-    """附在人设后面的「你现在的状态」，让她说话跟桌宠里的数值对得上。"""
+    """附在最后的「你现在的状态」，让她说话跟桌宠里的数值对得上。在主线程里调（要读 pet.stats）。"""
     s = pet.stats
     _, title, _, _ = s.level()
     now = datetime.now()
@@ -152,29 +223,147 @@ def _state_note(pet):
              "- 现在：周%s %s" % (WEEKDAYS[now.weekday()], now.strftime("%H:%M"))]
     if pet.off_duty():
         lines.append("- 现在是你的休息时间，你本来在睡觉，被叫醒来聊天")
+    # 别的扩展补充的（天气、待办……）
+    for more in pet.ext.call("chat_context", pet):
+        if more:
+            lines.append(str(more).strip())
     return "\n".join(lines)
 
 
-def _ask(pet, text, conv, persona):
-    """后台线程里跑：问一句，把 (回复, 新的 conv, 出错信息) 放进队列。"""
-    c = _cfg(pet)
-    if c.get("backend") == "api":
+def _system(c, persona, state):
+    """拼出完整的系统提示词：人设、记忆、表情说明、状态。记忆在后台线程里整理完才读。"""
+    parts = [persona]
+    mem = _read_memory() if c.get("memory", True) else ""
+    if mem:
+        parts.append("## 你记得的事\n以前和用户聊天时记下的。自然地用上就好，"
+                     "不要一条条念出来，也不要说「根据记忆」：\n" + mem)
+    if c.get("emotes", True):
+        parts.append(EMOTE_NOTE)
+    parts.append(state)
+    return "\n\n".join(parts)
+
+
+def _actions(pet):
+    """扩展登记的「她能做的事」（chat_actions 钩子）：[{"tag", "desc", "run"}]。"""
+    out = []
+    for acts in pet.ext.call("chat_actions", pet):
+        out += [a for a in acts or [] if a.get("tag") and a.get("run")]
+    return out
+
+
+def _actions_note(acts):
+    if not acts:
+        return ""
+    return ("\n\n## 你能帮用户做的事\n"
+            "需要的时候，在回复里单独起一行写 [[名字: 内容]]，程序会去做，这一行用户看不到；"
+            "做没做成程序会告诉用户，你正常说话就好：\n" +
+            "\n".join("- [[%s: ...]]：%s" % (a["tag"], a.get("desc", "")) for a in acts))
+
+
+def _do_actions(pet, reply):
+    """找出回复里的 [[名字: 内容]]，拿掉，交给对应的扩展去做。返回 (正文, [结果说明])。"""
+    acts = {a["tag"]: a for a in _actions(pet)}
+    notes = []
+
+    def run(m):
+        a = acts.get(m.group(1))
+        if not a:
+            return m.group(0)                  # 不认识的：原样留着
         try:
-            reply, conv = _ask_api(c, persona, text, conv or [])
-            _q.put((reply, conv, None))
+            r = a["run"](m.group(2).strip())
         except Exception as e:                                     # noqa: BLE001
-            _q.put((None, conv, str(e)[:300] or e.__class__.__name__))
+            r = "没做成：%s" % e
+        if r:
+            notes.append(str(r))
+        return ""
+
+    reply = ACTION_RE.sub(run, reply)
+    return re.sub(r"\n{3,}", "\n\n", reply).strip(), notes
+
+
+def _emote(reply):
+    """拿掉回复末尾的表情标签，返回 (正文, 标签)。没有标签时标签是 None。"""
+    m = EMOTE_RE.search(reply)
+    if m and m.group(1) in EMOTES:
+        return reply[:m.start()].rstrip(), m.group(1)
+    return reply, None
+
+
+# ---------------------------------------------------------------------- 调模型
+def _command(c):
+    """找 claude。npm 装的在 Windows 上是 claude.cmd：直接用 node 跑 cli.js，免得 cmd 把参数里的 [] "" 搞乱。"""
+    exe = c.get("claude") or shutil.which("claude")
+    if not exe:
+        return None
+    if exe.lower().endswith((".cmd", ".bat")):
+        d = os.path.dirname(exe)
+        js = os.path.join(d, "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+        node = os.path.join(d, "node.exe") if os.path.exists(os.path.join(d, "node.exe")) else shutil.which("node")
+        if os.path.exists(js) and node:
+            return [node, js]
+    return [exe]
+
+
+def _call(c, system, text, conv):
+    """问一句，返回 (回复, 新的 conv)。出错 raise。"""
+    if c.get("backend") == "api":
+        return _ask_api(c, system, text, conv or [])
+    return _ask_claude(c, system, text, conv)
+
+
+def _work(c, name, text, conv, persona, state):
+    """后台线程：先把攒下的话题整理进记忆，再回这句话（text 为 None 时只整理）。"""
+    with _wlock:
+        if c.get("memory", True):
+            _fold(c, name)
+        if text is None:
+            return
+        try:
+            reply, conv = _call(c, _system(c, persona, state), text, conv)
+            _q.put({"kind": "reply", "reply": reply, "conv": conv})
+        except Exception as e:                                     # noqa: BLE001
+            _q.put({"kind": "reply", "err": str(e)[:300] or e.__class__.__name__, "conv": conv})
+
+
+def _fold(c, name):
+    """把 _pending 里的话题和已有记忆一起交给模型，换成新的记忆。失败了留着下次再试。"""
+    with _plock:
+        topics = list(_pending)
+    if not topics:
         return
-    _ask_claude(c, persona, text, conv)
+    chat = "\n\n".join("【%s 的聊天】\n" % t["date"] +
+                       "\n".join(("用户：" if who == "me" else "她：") + said[:500]
+                                 for who, said in t["lines"])
+                       for t in topics)[-12000:]
+    prompt = "已有的记忆：\n%s\n\n最近的聊天：\n%s" % (_read_memory() or "（还没有）", chat)
+    try:
+        mem = _call(c, MEMORY_PROMPT.replace("{name}", name), prompt, None)[0].strip()
+    except Exception as e:                                         # noqa: BLE001
+        _q.put({"kind": "log", "text": "聊天：整理记忆没成功，下次再试（%s）" % str(e)[:200]})
+        return
+    mem = mem.strip("`").strip()
+    if mem in ("（无）", "(无)", "无"):
+        mem = ""
+    if len(mem) > MEMORY_MAX:
+        mem = mem[:MEMORY_MAX].rsplit("\n", 1)[0]
+    try:
+        with open(data_path(MEMORY_FILE), "w", encoding="utf-8") as fh:
+            fh.write(mem + "\n" if mem else "")
+    except OSError as e:
+        _q.put({"kind": "log", "text": "聊天：记忆文件写不进去（%s）" % e})
+        return
+    with _plock:
+        del _pending[:len(topics)]
+    _q.put({"kind": "memory", "text": "聊天：%d 段话题整理进记忆了（%d 条）" %
+            (len(topics), mem.count("\n") + 1 if mem else 0)})
 
 
-def _ask_claude(c, persona, text, sid):
+def _ask_claude(c, system, text, sid):
     cmd = _command(c)
     if not cmd:
-        _q.put((None, sid, "没找到 claude 命令，先装 Claude Code，或者改用 backend: api"))
-        return
+        raise RuntimeError("没找到 claude 命令，先装 Claude Code，或者改用 backend: api")
     args = cmd + ["-p", "--model", str(c.get("model") or "sonnet"), "--tools", "",
-                  "--output-format", "json", "--system-prompt", persona]
+                  "--output-format", "json", "--system-prompt", system]
     if sid:
         args += ["--resume", sid]
     # 在仓库外面的空目录里跑：不会被当成哪个项目，读不到 CLAUDE.md 和项目记忆
@@ -184,24 +373,20 @@ def _ask_claude(c, persona, text, sid):
         r = subprocess.run(args, input=text.encode("utf-8"), cwd=cwd, capture_output=True,
                            timeout=float(c.get("timeout", 120)),
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        out = r.stdout.decode("utf-8", "replace")
-        try:
-            d = json.loads(out)
-        except ValueError:
-            err = (r.stderr.decode("utf-8", "replace") or out).strip()
-            _q.put((None, sid, err[:300] or "claude 没有返回内容"))
-            return
-        if d.get("is_error"):
-            _q.put((None, sid, str(d.get("result") or "出错了")[:300]))
-        else:
-            _q.put(((d.get("result") or "").strip(), d.get("session_id") or sid, None))
     except subprocess.TimeoutExpired:
-        _q.put((None, sid, "等太久了，没回音"))
-    except Exception as e:                                         # noqa: BLE001
-        _q.put((None, sid, str(e)))
+        raise RuntimeError("等太久了，没回音")
+    out = r.stdout.decode("utf-8", "replace")
+    try:
+        d = json.loads(out)
+    except ValueError:
+        err = (r.stderr.decode("utf-8", "replace") or out).strip()
+        raise RuntimeError(err[:300] or "claude 没有返回内容")
+    if d.get("is_error"):
+        raise RuntimeError(str(d.get("result") or "出错了")[:300])
+    return (d.get("result") or "").strip(), d.get("session_id") or sid
 
 
-def _ask_api(c, persona, text, history):
+def _ask_api(c, system, text, history):
     """直接调 HTTP 接口问一句，返回 (回复, 带上这一问一答的消息列表)。出错直接 raise。"""
     api = c.get("api") or {}
     fmt = api.get("format") or "anthropic"
@@ -231,13 +416,13 @@ def _ask_api(c, persona, text, history):
     if fmt == "anthropic":
         url = base + ("/messages" if base.endswith("/v1") else "/v1/messages")
         headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
-        body = {"model": model, "max_tokens": max_tokens, "system": persona, "messages": msgs}
+        body = {"model": model, "max_tokens": max_tokens, "system": system, "messages": msgs}
     elif fmt == "openai":
         url = base + "/chat/completions"
         if key:
             headers["Authorization"] = "Bearer " + key
         body = {"model": model, "max_tokens": max_tokens,
-                "messages": [{"role": "system", "content": persona}] + msgs}
+                "messages": [{"role": "system", "content": system}] + msgs}
     else:
         raise RuntimeError("chat.api.format 只能是 anthropic 或 openai")
 
@@ -269,27 +454,53 @@ def _ask_api(c, persona, text, history):
     return reply, msgs + [{"role": "assistant", "content": reply}]
 
 
+# ---------------------------------------------------------------------- 话题
+def _end_topic(pet):
+    """当前话题结束：说过话的交给记忆整理（空闲时马上在后台整理），下一句开新话题。"""
+    c = _cfg(pet)
+    topic, _s["topic"], _s["conv"] = _s["topic"], [], None
+    if c.get("memory", True) and any(who == "her" for who, _ in topic):
+        with _plock:
+            _pending.append({"date": datetime.fromtimestamp(_s["last"] or time.time()).strftime("%m-%d"),
+                             "lines": topic})
+            del _pending[:-MAX_PENDING]
+        if not _s["busy"]:
+            threading.Thread(target=_work, args=(c, pet.cfg.get("name", "鲸鱼娘"), None, None, None, None),
+                             daemon=True).start()
+    _save()
+
+
 def send(pet, text):
     text = text.strip()
     if not text or _s["busy"]:
         return
+    c = _cfg(pet)
     now = time.time()
-    if now - _s["last"] > float(_cfg(pet).get("session_minutes", 30)) * 60:
-        _s["conv"] = None
+    if now - _s["last"] > float(c.get("session_minutes", 30)) * 60:
+        _end_topic(pet)
     _s["last"] = now
     _s["busy"] = True
     _s["log"].append(("me", text))
+    _s["topic"].append(["me", text])
     pet.log("聊天：发了一句（%d 字）" % len(text))
     pet.set_sign("chat", expr="look", text=None, on_click=lambda: open_window(pet), priority=-1)
-    threading.Thread(target=_ask, args=(pet, text, _s["conv"], _persona(pet)), daemon=True).start()
+    threading.Thread(target=_work, args=(c, pet.cfg.get("name", "鲸鱼娘"), text, _s["conv"],
+                                         _persona(pet) + _actions_note(_actions(pet)), _state_note(pet)),
+                     daemon=True).start()
+    _save()
     _render()
 
 
 def _drain(pet):
-    """主线程里每 0.2 秒看一眼有没有回复（Tk 只能在主线程里动）。"""
+    """主线程里每 0.2 秒看一眼后台有没有消息（Tk 只能在主线程里动）。"""
     try:
         while True:
-            reply, conv, err = _q.get_nowait()
+            d = _q.get_nowait()
+            if d["kind"] != "reply":
+                pet.log(d["text"])
+                _save()
+                continue
+            err = d.get("err")
             _s["busy"] = False
             _s["last"] = time.time()
             pet.clear_sign("chat")
@@ -297,10 +508,19 @@ def _drain(pet):
                 pet.log("聊天出错：%s" % err)
                 _s["log"].append(("err", err))
             else:
-                _s["conv"] = conv
+                _s["conv"] = d["conv"]
+                reply, notes = _do_actions(pet, d["reply"])
+                reply, tag = _emote(reply)
                 _s["log"].append(("her", reply))
+                _s["topic"].append(["her", reply])
+                for n in notes:
+                    _s["log"].append(("note", n))
                 pet.stats.event("chat")
-                pet.cheer(1.5)
+                if tag is None:
+                    pet.cheer(1.5)
+                elif EMOTES[tag] and _alive():
+                    pet.behavior.show(*EMOTES[tag])
+            _save()
             if _alive():
                 _render()
             else:
@@ -333,11 +553,15 @@ def open_window(pet):
     def reset():
         if _s["busy"]:
             return
-        _s["conv"], _s["log"] = None, []
+        _end_topic(pet)
+        _s["log"] = []
+        _save()
         _render()
 
     top, card, head = panel(pet, "和%s聊天" % pet.cfg.get("name", "鲸鱼娘"), hide)
     link(head, "新话题", reset)
+    if _cfg(pet).get("memory", True):
+        link(head, "记忆", _open_memory)
 
     box = tk.Frame(card, bg=BG)
     box.pack(fill="both", expand=True, padx=10)
@@ -388,10 +612,12 @@ def _render():
     txt.delete("1.0", "end")
     if not _s["log"]:
         txt.insert("end", "想聊点什么？回车发送，Esc 收起。\n", "wait")
-    for who, t in _s["log"]:
+    for who, t in _s["log"][-MAX_LOG:]:
         if who == "me":
             txt.insert("end", "你\n", "who")
             txt.insert("end", t + "\n", "me")
+        elif who == "note":
+            txt.insert("end", "（%s）\n" % t, "wait")
         elif who == "her":
             txt.insert("end", "她\n", "who")
             txt.insert("end", t + "\n", "her")

@@ -24,6 +24,7 @@ DEFAULTS = {
     "wander_gap": [40, 120],       # 多少秒溜达一次
     "action_gap": [8, 20],         # 多少秒做一个小动作
     "oops_words": ["失败", "出错", "错误", "过期"],    # 提醒标题带这些字，她会滑跪
+    "fullscreen_quiet": True,      # 有程序全屏（看视频、投屏、打游戏）时藏起来，提醒攒着
     "play": {
         "enabled": True,
         "idle_minutes": 30,

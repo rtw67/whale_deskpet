@@ -117,6 +117,12 @@ class Behavior:
         """外面要她马上做个动作（比如喂饭时吃白饭）。"""
         self._start_action(time.time(), name, duration)
 
+    def show(self, expr, duration):
+        """摆一会儿某个表情（不在 ACTIONS 里的也行，比如聊天时的吓一跳）。皮肤里没这张图就算了。"""
+        if self.has(expr):
+            self.interrupt()
+            self.action = {"name": expr, "expr": expr, "flip": False, "until": time.time() + duration}
+
     def _start_action(self, now, name=None, duration=None):
         names = [n for n, (_, _, need) in ACTIONS.items() if self.has(need)]
         if not names:

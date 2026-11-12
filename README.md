@@ -15,10 +15,12 @@
 - **待机**：发呆、眨眼、伸懒腰、打哈欠、挥手、摸鱼、跳舞……隔一阵在「家」附近溜达：随机几个落脚点、走一段歇一下，走法（走、背手踱步、小跳、翻滚）和路线每段都不一样，偶尔横穿屏幕「路过」。
 - **一起玩**：闲得久了会邀请你玩「追鼠标」或「捉迷藏」（她从屏幕边探头，缩回去之前点到她算捉到）；也可以右键「玩」主动开始。玩法是插件，可以自己加。
 - **好感度 / 心情 / 体力**：摸摸、喂饭、陪玩都会涨好感，好感越高解锁越多台词。只加分、不惩罚、不需要每天照顾。
-- **聊天**（默认关）：右键「聊天」和她说话。可以接本机的 Claude Code，也可以在配置里直接填接口地址和 key（Anthropic 格式或 OpenAI 兼容格式，DeepSeek 之类都行）。只聊天，不会动你的文件。人设跟着皮肤走（鲸鱼娘的在 [`skins/whale/persona.md`](skins/whale/persona.md)），说话时还会参考她当前的好感、心情、体力和时间。配置写法见 [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py) 开头。
+- **聊天**（默认关）：右键「聊天」和她说话。可以接本机的 Claude Code，也可以在配置里直接填接口地址和 key（Anthropic 格式或 OpenAI 兼容格式，DeepSeek 之类都行）。只聊天，不会动你的文件。人设跟着皮肤走（鲸鱼娘的在 [`skins/whale/persona.md`](skins/whale/persona.md)），说话时还会参考她当前的好感、心情、体力和时间。她会记住聊过的事（你的称呼、在忙什么、喜欢什么，存在 `data/chat_memory.md`，可以随时改、删），回话时还会配上表情动作。配置写法见 [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py) 开头。
 - **右键泡泡菜单**：多层、自动分页、像素风图标。
 - **云朵气泡**：蓝色云朵形状、白字，大小随文字自动收放，小尾巴指向她。
 - **休息时间**：下班和周末她会睡觉（时间可配）。
+- **免打扰**：有程序全屏（看视频、投屏、打游戏）时她自动藏起来；右键「免打扰」可以手动静音半小时到下班。免打扰期间不说话、不乱动，提醒先攒着，结束后再冒出来。
+- **设置**：右键「设置」里开关开机自启（照现在的启动方式，`--ext-dir` 也会带上）、打开配置文件和数据目录。
 
 ## 快速开始
 
@@ -31,7 +33,7 @@ pythonw pet.py          # 或者双击 pet.bat
 ```
 
 - 左键拖动她换位置（会记住，那里就是她的「家」）；单击 = 处理当前这条，没事时 = 摸摸她；长按 = 看状态。
-- 右键：消息、互动（玩 / 喂饭 / 状态）、工作（装扩展时）、归位、退出。
+- 右键：消息、互动（玩 / 喂饭 / 状态）、扩展加的（聊天等）、免打扰、设置、归位、退出。
 - 配置：复制 `config.example.json` 为 `config.json` 再改，存盘几秒内生效。运行数据在 `data/`。
 
 ## 给她发提醒
@@ -76,6 +78,9 @@ $w = New-Object IO.StreamWriter($c.GetStream()); $w.WriteLine('{"title":"备份�
 - `on_message(pet, msg)` 收到提醒时接管（比如变成举牌）
 - `on_open(pet, msg)` 点开提醒时用你自己的窗口打开
 - `menu_items(pet)` 往右键菜单加泡泡（可以带子菜单、用皮肤里的图标）
+- `chat_context(pet)` 聊天时告诉她一些情况（比如外面的天气、你今天的待办）
+- `chat_actions(pet)` 聊天时她能帮你做的事：她在回复里写 `[[名字: 内容]]`，你的函数去做（比如记一条待办）
+- 冒不要紧的话之前先看 `pet.quiet()`：免打扰中就先别说
 - `setup(pet)` 里注册自己的好感事件、加台词
 
 完整约定见 [`deskpet/extensions/__init__.py`](deskpet/extensions/__init__.py)，
@@ -124,10 +129,16 @@ Pure Python standard library (tkinter) — **no pip install needed**.
 - **Chat** (off by default) — right-click → Chat to talk to her, either through your local Claude Code
   or straight to an API set in the config (Anthropic or OpenAI-compatible format, e.g. DeepSeek).
   Chat only — no file access. The persona lives with the skin ([`skins/whale/persona.md`](skins/whale/persona.md))
-  and her current affection / mood / energy / time of day are passed along. See the top of [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py).
+  and her current affection / mood / energy / time of day are passed along.
+  She remembers what you talked about (how to call you, what you're up to, what you like — kept in
+  `data/chat_memory.md`, edit or delete it any time) and acts out her replies with expressions. See the top of [`deskpet/extensions/chat.py`](deskpet/extensions/chat.py).
 - **Bubble menu** — multi-level, auto-paginated, pixel-art icons.
 - **Cloud speech bubbles** — blue cloud shape with white text, sized to the text, with a little tail pointing at her.
 - **Rest hours** — she sleeps outside working hours and on weekends (configurable).
+- **Do not disturb** — she hides while another program is fullscreen (video, presenting, games);
+  right-click → Do not disturb to mute her for a while. Notifications are held and shown afterwards.
+- **Settings** — right-click → Settings: start with Windows (reuses the current launch, `--ext-dir` included),
+  open the config file or the data folder.
 
 ## Quick start
 
@@ -160,7 +171,8 @@ CLI: `python pet.py --say "hello"`, `python pet.py --play`. Connecting without s
 
 Drop a `.py` into `deskpet/extensions/`, or load a directory with `--ext-dir DIR` / `extension_dirs`
 in `config.json`. Hooks (all optional): `setup`, `poll` (every 3 s; use `pet.set_sign` / `pet.clear_sign`),
-`on_message`, `on_open`, `on_event`, `menu_items`. See
+`on_message`, `on_open`, `on_event`, `menu_items`, `chat_context` (tell her things while chatting),
+`chat_actions` (things she can do from chat via `[[tag: text]]`). Check `pet.quiet()` before small talk. See
 [`deskpet/extensions/__init__.py`](deskpet/extensions/__init__.py) and the example
 [`water.py`](deskpet/extensions/water.py). Games live in `deskpet/play/` — see
 [`deskpet/play/__init__.py`](deskpet/play/__init__.py).
